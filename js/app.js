@@ -1296,7 +1296,8 @@
           <div><span class="stat-n tnum">${sents}</span><span class="stat-l">句子</span></div>
           <div><span class="stat-n tnum">${S.history.length}</span><span class="stat-l">查詢紀錄</span></div>
         </div>
-      </section>`,
+      </section>
+      <p class="author">作者：ArchieKUO</p>`,
     };
   }
 
@@ -1485,7 +1486,8 @@
         <button class="btn ghost danger" data-act="clear-all">${c === 'clear-all' ? '再按一次：全部刪除（無法復原）' : '清除全部資料'}</button>
         <p class="muted small">清除前建議先匯出 JSON 備份。</p>
       </section>
-      <p class="muted small center">單字本 1.0</p>`,
+      <p class="muted small center">單字本 1.0</p>
+      <p class="author">作者：ArchieKUO</p>`,
       after() {
         const r = document.getElementById('set-rate');
         r.addEventListener('input', () => { st.rate = parseFloat(r.value); document.getElementById('rate-v').textContent = st.rate.toFixed(1) + '×'; });

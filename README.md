@@ -1,5 +1,7 @@
 # 單字本
 
+*作者：ArchieKUO*
+
 自用的中英單字查詢與複習 PWA，裝在 Android（Chrome）和 Windows（Chrome / Edge）。
 資料全部存在各自裝置的瀏覽器裡（IndexedDB），不上傳任何伺服器；手機和電腦之間用「匯出 / 匯入 JSON」＋ Quick Share 同步。
 

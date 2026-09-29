@@ -572,3 +572,7 @@ mark { background: var(--marker); color: inherit; padding: 0 2px; border-radius:
 .fchip.small { min-height: 30px; font-size: .8rem; padding: 0 10px; }
 label.btn { cursor: pointer; align-self: flex-start; }
 .danger-row .btn .ic { width: 1em; height: 1em; }
+
+/* 作者署名 */
+.author { margin: 0; text-align: center; font-style: italic; font-family: var(--font-word); color: var(--muted); font-size: .9rem; }
+.author-inline { font-style: italic; font-family: var(--font-word); }
