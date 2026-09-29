@@ -16,7 +16,7 @@
     session: null,         // 進行中的複習
     imp: { step: 1, files: false, resolved: {} },
     backup: { exported: false, importPicked: false, strategy: 'merge', done: false },
-    settings: { accent: 'en-US', rate: 1, autoSpeak: false, dict: 'free', mt: 'google', defaultMode: 'word', perSession: 20, fontSize: 'normal' },
+    settings: { accent: 'en-US', rate: 1, autoSpeak: false, dict: 'free', mt: 'google', defaultMode: 'word', perSession: 20, fontSize: 'normal', theme: 'light', voice: '' },
     shareText: null,
   };
 
@@ -46,6 +46,8 @@
     swap: '<path d="M4 8h13l-3-3M20 16H7l3 3"/>',
     grid: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
     play: '<path d="M8 5v14l11-7z"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
     alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4.5M12 17.2v.3"/>',
   };
   const ic = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[name]}</svg>`;
@@ -81,16 +83,61 @@
     return esc(en).replace(re, '<mark>$1</mark>');
   }
 
-  function speak(text, rate) {
-    if (!('speechSynthesis' in window)) { toast('這個瀏覽器沒有系統語音'); return; }
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = S.settings.accent;
-      u.rate = rate || S.settings.rate;
-      speechSynthesis.speak(u);
-    } catch (err) { toast('無法播放發音'); }
+  /* ---------- 發音（系統 TTS) ---------- */
+  let voices = [];
+  function loadVoices() {
+    try { voices = speechSynthesis.getVoices().filter((v) => /^en[-_]/i.test(v.lang)); } catch (err) { voices = []; }
   }
+  if ('speechSynthesis' in window) {
+    loadVoices();
+    speechSynthesis.addEventListener?.('voiceschanged', () => { loadVoices(); if (/settings/.test(location.hash)) render(); });
+  }
+  function pickVoice() {
+    const want = S.settings.accent.toLowerCase();
+    const norm = (v) => v.lang.replace('_', '-').toLowerCase();
+    return voices.find((v) => v.name === S.settings.voice)
+      || voices.find((v) => norm(v) === want && /google/i.test(v.name))
+      || voices.find((v) => norm(v) === want)
+      || voices[0] || null;
+  }
+
+  let speakingBtn = null;
+  function speak(text, rate, btn) {
+    if (!('speechSynthesis' in window)) { toast('這個瀏覽器不支援系統語音，請改用 Chrome 或 Edge'); return; }
+    const synth = speechSynthesis;
+    if (speakingBtn) speakingBtn.classList.remove('speaking');
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.lang = v ? v.lang.replace('_', '-') : S.settings.accent;
+    u.rate = rate || S.settings.rate;
+    u.onstart = () => { speakingBtn = btn || null; btn?.classList.add('speaking'); };
+    u.onend = () => btn?.classList.remove('speaking');
+    u.onerror = (e) => {
+      btn?.classList.remove('speaking');
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      toast(voices.length ? `無法發音（${e.error})` : '找不到英文語音：請到系統設定安裝英文的文字轉語音');
+    };
+    // Chrome 在 cancel() 之後馬上 speak() 有時會沒聲音，所以稍微等一下
+    const busy = synth.speaking || synth.pending;
+    if (busy) synth.cancel();
+    setTimeout(() => {
+      try { synth.speak(u); synth.resume(); } catch (err) { toast('無法播放發音'); }
+    }, busy ? 80 : 0);
+  }
+
+  /* ---------- 深淺色 ---------- */
+  const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+  function applyTheme() {
+    const t = S.settings.theme;
+    const dark = t === 'dark' || (t === 'system' && darkMQ.matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = dark ? '#121816' : '#f7f8f6';
+  }
+  darkMQ.addEventListener?.('change', applyTheme);
+  function saveTheme() { try { localStorage.setItem('danciben-theme', S.settings.theme); } catch (err) { /* 無法儲存沒關係 */ } }
+  try { const saved = localStorage.getItem('danciben-theme'); if (saved) S.settings.theme = saved; } catch (err) { /* 忽略 */ }
 
   let toastTimer;
   function toast(msg) {
@@ -128,6 +175,7 @@
     S.history = S.history.filter((h) => h.id !== e.id);
     S.history.unshift({ id: e.id, at: Date.now() });
     S.draft = '';
+    if (S.settings.autoSpeak) speak(e.text);
     go('result/' + e.id);
   }
 
@@ -196,6 +244,7 @@
         <span class="row-sub">${e.type === 'sentence' ? '<span class="tag-s">句子</span>' : ''}${esc(zhShort(e))}</span>
       </a>
       <div class="row-meta">
+        <button class="icon-btn row-speak" data-act="speak" data-text="${esc(e.text)}" aria-label="播放發音">${ic('speaker')}</button>
         ${opts.time ? `<span class="muted small">${rel(opts.time)}</span>` : `<span class="muted small tnum">查 ${e.count} 次</span>`}
         <button class="star-mini ${e.starred ? 'on' : ''}" data-act="star" data-id="${e.id}" aria-label="${e.starred ? '移出複習' : '加入複習'}">${ic('star')}</button>
       </div></li>`;
@@ -768,6 +817,8 @@
       title: '設定', tab: 'more', back: '#/more',
       html: `
       <section class="block panel"><h3>發音（系統語音）</h3>
+        <label class="set-row"><span>語音</span><select id="set-voice" data-set="voice">${voices.length ? `<option value="">自動（${esc(pickVoice()?.name || '')})</option>` + voices.map((vc) => `<option value="${esc(vc.name)}" ${st.voice === vc.name ? 'selected' : ''}>${esc(vc.name)}(${esc(vc.lang)})</option>`).join('') : '<option value="">找不到英文語音</option>'}</select></label>
+        ${!('speechSynthesis' in window) ? '<p class="bad-txt small">這個瀏覽器不支援系統語音。</p>' : ''}
         <label class="set-row"><span>口音</span>${sel('set-accent', 'accent', [['en-US', '美式'], ['en-GB', '英式']])}</label>
         <label class="set-row"><span>語速 <span class="muted tnum" id="rate-v">${st.rate.toFixed(1)}×</span></span><input id="set-rate" type="range" min="0.5" max="1.5" step="0.1" value="${st.rate}"></label>
         <label class="set-row"><span>查詢後自動唸出來</span><input id="set-auto" type="checkbox" class="switch" data-set="autoSpeak" ${st.autoSpeak ? 'checked' : ''}></label>
@@ -782,7 +833,7 @@
         <label class="set-row"><span>每次題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
       </section>
       <section class="block panel"><h3>外觀</h3>
-        <label class="set-row"><span>主題</span><select id="set-theme" disabled><option>淺色（深色之後再做）</option></select></label>
+        <label class="set-row"><span>主題</span>${sel('set-theme', 'theme', [['light', '白底'], ['dark', '黑底'], ['system', '跟隨系統']])}</label>
         <label class="set-row"><span>字級</span>${sel('set-font', 'fontSize', [['normal', '標準'], ['large', '大']])}</label>
       </section>
       <section class="block panel"><h3>資料</h3>
@@ -797,6 +848,8 @@
         document.querySelectorAll('[data-set]').forEach((el) => el.addEventListener('change', () => {
           const k = el.dataset.set;
           st[k] = el.type === 'checkbox' ? el.checked : el.value;
+          if (k === 'theme') { applyTheme(); saveTheme(); render(); }
+          if (k === 'accent') S.settings.voice = '';
           if (k === 'fontSize') document.documentElement.dataset.font = st.fontSize;
           if (k === 'perSession') S.reviewSetup.count = Number(st.perSession);
           toast('已儲存');
@@ -841,7 +894,8 @@
     document.getElementById('view').innerHTML = v.html;
     const tb = document.getElementById('topbar');
     tb.innerHTML = `${v.back ? `<a class="icon-btn" href="${v.back}" aria-label="返回">${ic('back')}</a>` : '<span class="brand-sm">單字本</span>'}
-      <h1 class="${v.hideTitle ? 'sr-only' : ''}">${esc(v.title)}</h1>`;
+      <h1 class="${v.hideTitle ? 'sr-only' : ''}">${esc(v.title)}</h1>
+      <button class="icon-btn theme-btn" data-act="theme-toggle" aria-label="${document.documentElement.dataset.theme === 'dark' ? '切換成白底' : '切換成黑底'}">${ic(document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon')}</button>`;
     document.title = `${v.title} · 單字本`;
     document.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('on', a.dataset.tab === v.tab));
     document.body.classList.toggle('focus-mode', !!v.focus);
@@ -852,7 +906,8 @@
   /* ---------- 點擊事件 ---------- */
   const actions = {
     star: (d) => toggleStar(d.id),
-    speak: (d) => speak(d.text, d.rate ? parseFloat(d.rate) : null),
+    speak: (d, el) => speak(d.text, d.rate ? parseFloat(d.rate) : null, el),
+    'theme-toggle': () => { S.settings.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; applyTheme(); saveTheme(); render(); },
     query: (d) => { S.mode = d.mode || S.mode; runQuery(d.text, d.mode); },
     mode: (d) => { S.mode = d.mode; render(); document.getElementById('q')?.focus(); },
     clear: () => { S.draft = ''; render(); document.getElementById('q').focus(); },
@@ -908,6 +963,7 @@
   // 從 artifact 連結只能帶 #anchor（沒有斜線），也接受
   if (/^#[a-z]/.test(location.hash)) location.hash = '#/' + location.hash.slice(1);
 
+  applyTheme();
   render();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
