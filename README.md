@@ -13,9 +13,10 @@
 | 單字庫 | 列表（全部/星號/單字/句子） | `#/library` |
 | | 單字詳情 | `#/entry/adapt` |
 | 複習 | 首頁（選範圍、題型） | `#/review` |
-| | 閃卡/例句挖空/聽發音選字 | `#/review/flash` `#/review/cloze` `#/review/listen` |
+| | 今天的複習（間隔重複、題型自動混合） | `#/review/quiz` |
+| | 單一題型：閃卡、反向閃卡、例句挖空、易混淆辨析、聽發音選字 | `#/review/flash` `#/review/reverse` `#/review/cloze` `#/review/confuse` `#/review/listen` |
 | | 結果 | `#/review/result` |
-| 更多 | 匯入 Word 精靈 | `#/import` |
+| 更多 | 匯入 Word 精靈（含更正內容、用法標記） | `#/import` |
 | | 匯出/匯入 JSON | `#/backup` |
 | | 設定 | `#/settings` |
 

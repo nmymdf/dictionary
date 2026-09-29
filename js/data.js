@@ -8,10 +8,10 @@
   // group：同組易混淆字的 id;tags：匯入時的檔名編號
   const entries = [
     {
-      id: 'affect', type: 'word', text: 'affect', ipa: '/əˈfekt/',
+      id: 'affect', type: 'word', usage: 'daily', text: 'affect', ipa: '/əˈfekt/',
       senses: [
         { pos: 'v.', zh: '影響；使感動' },
-        { pos: 'n.', zh: '（心理學）情感、情緒表現' },
+        { pos: 'n.', zh: '（心理學）情感、情緒表現', u: 'rare' },
       ],
       examples: [
         { en: 'Lack of sleep can affect your memory.', zh: '睡眠不足會影響你的記憶力。' },
@@ -22,10 +22,10 @@
       review: { status: 'learning', right: 4, wrong: 2, due: ago(0) },
     },
     {
-      id: 'effect', type: 'word', text: 'effect', ipa: '/ɪˈfekt/',
+      id: 'effect', type: 'word', usage: 'daily', text: 'effect', ipa: '/ɪˈfekt/',
       senses: [
         { pos: 'n.', zh: '效果；影響；結果' },
-        { pos: 'v.', zh: '使發生、實現（正式）' },
+        { pos: 'v.', zh: '使發生、實現', u: 'formal' },
       ],
       examples: [
         { en: 'The new law had little effect on prices.', zh: '新法對物價幾乎沒有影響。' },
@@ -36,7 +36,7 @@
       review: { status: 'learning', right: 3, wrong: 1, due: ago(0) },
     },
     {
-      id: 'adapt', type: 'word', text: 'adapt', ipa: '/əˈdæpt/',
+      id: 'adapt', type: 'word', usage: 'daily', text: 'adapt', ipa: '/əˈdæpt/',
       senses: [
         { pos: 'v.', zh: '適應；調整' },
         { pos: 'v.', zh: '改編（小說、劇本）' },
@@ -50,7 +50,7 @@
       review: { status: 'new', right: 0, wrong: 0, due: ago(0) },
     },
     {
-      id: 'adopt', type: 'word', text: 'adopt', ipa: '/əˈdɑːpt/',
+      id: 'adopt', type: 'word', usage: 'daily', text: 'adopt', ipa: '/əˈdɑːpt/',
       senses: [
         { pos: 'v.', zh: '採用；採納' },
         { pos: 'v.', zh: '收養；領養' },
@@ -60,21 +60,23 @@
         { en: 'They adopted a cat from the shelter.', zh: '他們從收容所領養了一隻貓。' },
       ],
       group: 'g-adapt', tags: ['07'], starred: true, count: 3,
+      fixes: [{ field: '中文', from: '適應；改編', to: '採用；收養', why: '和 adapt 的意思寫反了', file: '07' }],
       last: ago(2), added: ago(14),
       review: { status: 'learning', right: 2, wrong: 2, due: ago(0) },
     },
     {
-      id: 'adept', type: 'word', text: 'adept', ipa: '/əˈdept/',
+      id: 'adept', type: 'word', usage: 'rare', text: 'adept', ipa: '/əˈdept/',
       senses: [{ pos: 'adj.', zh: '熟練的；擅長的' }],
       examples: [
         { en: 'She is adept at handling difficult customers.', zh: '她很擅長應付難搞的客人。' },
       ],
       group: 'g-adapt', tags: ['07'], starred: false, count: 1,
+      fixes: [{ field: '詞性', from: 'v.', to: 'adj.', why: 'adept 是形容詞', file: '07' }, { field: '例句', from: 'She is adept in handle difficult customers.', to: 'She is adept at handling difficult customers.', why: 'adept 後面接 at + V-ing', file: '07' }],
       last: ago(9), added: ago(14),
       review: { status: 'none', right: 0, wrong: 0, due: null },
     },
     {
-      id: 'principle', type: 'word', text: 'principle', ipa: '/ˈprɪnsəpl/',
+      id: 'principle', type: 'word', usage: 'formal', text: 'principle', ipa: '/ˈprɪnsəpl/',
       senses: [
         { pos: 'n.', zh: '原則；原理' },
         { pos: 'n.', zh: '（道德）準則、信條' },
@@ -88,10 +90,10 @@
       review: { status: 'mastered', right: 6, wrong: 0, due: ago(-5) },
     },
     {
-      id: 'principal', type: 'word', text: 'principal', ipa: '/ˈprɪnsəpl/',
+      id: 'principal', type: 'word', usage: 'formal', text: 'principal', ipa: '/ˈprɪnsəpl/',
       senses: [
         { pos: 'n.', zh: '校長；負責人' },
-        { pos: 'adj.', zh: '主要的；首要的' },
+        { pos: 'adj.', zh: '主要的；首要的', u: 'formal' },
       ],
       examples: [
         { en: 'The principal called a meeting with the parents.', zh: '校長召集家長開會。' },
@@ -102,7 +104,7 @@
       review: { status: 'learning', right: 1, wrong: 1, due: ago(0) },
     },
     {
-      id: 'complement', type: 'word', text: 'complement', ipa: '/ˈkɑːmplɪment/',
+      id: 'complement', type: 'word', usage: 'formal', text: 'complement', ipa: '/ˈkɑːmplɪment/',
       senses: [
         { pos: 'v.', zh: '補充；使完美、相得益彰' },
         { pos: 'n.', zh: '補充物；（文法）補語' },
@@ -115,7 +117,7 @@
       review: { status: 'none', right: 0, wrong: 0, due: null },
     },
     {
-      id: 'compliment', type: 'word', text: 'compliment', ipa: '/ˈkɑːmplɪmənt/',
+      id: 'compliment', type: 'word', usage: 'daily', text: 'compliment', ipa: '/ˈkɑːmplɪmənt/',
       senses: [
         { pos: 'n.', zh: '讚美；恭維' },
         { pos: 'v.', zh: '稱讚' },
@@ -129,7 +131,7 @@
     },
     {
       // 這個檔沒有音標（有些舊單字簿沒有）
-      id: 'economic', type: 'word', text: 'economic', ipa: '',
+      id: 'economic', type: 'word', usage: 'formal', text: 'economic', ipa: '',
       senses: [{ pos: 'adj.', zh: '經濟的；經濟上的' }],
       examples: [
         { en: 'The country is facing economic problems.', zh: '這個國家正面臨經濟問題。' },
@@ -139,7 +141,7 @@
       review: { status: 'none', right: 0, wrong: 0, due: null },
     },
     {
-      id: 'economical', type: 'word', text: 'economical', ipa: '',
+      id: 'economical', type: 'word', usage: 'daily', text: 'economical', ipa: '',
       senses: [{ pos: 'adj.', zh: '節省的；划算的' }],
       examples: [
         { en: 'This car is very economical on fuel.', zh: '這台車非常省油。' },
@@ -149,7 +151,7 @@
       review: { status: 'learning', right: 2, wrong: 1, due: ago(0) },
     },
     {
-      id: 'meticulous', type: 'word', text: 'meticulous', ipa: '/məˈtɪkjələs/',
+      id: 'meticulous', type: 'word', usage: 'formal', text: 'meticulous', ipa: '/məˈtɪkjələs/',
       senses: [{ pos: 'adj.', zh: '一絲不苟的；極仔細的' }],
       examples: [
         { en: 'He keeps meticulous records of his expenses.', zh: '他把開銷記錄得一絲不苟。' },
@@ -159,7 +161,7 @@
       review: { status: 'new', right: 0, wrong: 0, due: ago(0) },
     },
     {
-      id: 'resilient', type: 'word', text: 'resilient', ipa: '/rɪˈzɪliənt/',
+      id: 'resilient', type: 'word', usage: 'formal', text: 'resilient', ipa: '/rɪˈzɪliənt/',
       senses: [{ pos: 'adj.', zh: '有韌性的；能迅速恢復的' }],
       examples: [
         { en: 'Children are often more resilient than adults.', zh: '孩子往往比大人更有韌性。' },

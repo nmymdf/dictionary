@@ -11,12 +11,12 @@
     history: M.history,
     mode: 'word',          // 查詢模式：word | sentence
     draft: '',
-    lib: { filter: 'all', q: '', sort: 'recent' },
-    reviewSetup: { range: 'due', mode: 'flash', count: 5, tag: '07' },
+    lib: { filter: 'all', usage: 'all', q: '', sort: 'recent' },
+    reviewSetup: { range: 'all', mode: 'mix', count: 20, tag: '07', skipRare: false, open: false },
     session: null,         // 進行中的複習
-    imp: { step: 1, files: false, resolved: {} },
+    imp: { step: 1, files: false, resolved: {}, fixed: {} },
     backup: { exported: false, importPicked: false, strategy: 'merge', done: false },
-    settings: { accent: 'en-US', rate: 1, autoSpeak: false, dict: 'free', mt: 'google', defaultMode: 'word', perSession: 20, fontSize: 'normal', theme: 'light', voice: '' },
+    settings: { accent: 'en-US', rate: 1, autoSpeak: false, dict: 'free', mt: 'google', defaultMode: 'word', perSession: 20, newPerDay: 20, fontSize: 'normal', theme: 'light', voice: '' },
     shareText: null,
   };
 
@@ -75,6 +75,13 @@
     const [label, cls] = STATUS[e.review.status];
     return `<span class="pill ${cls}">${label}</span>`;
   };
+  // 用法標記:生活 / 正式 / 很少用
+  const USAGE = { daily: ['生活', 'u-daily'], formal: ['正式', 'u-formal'], rare: ['很少用', 'u-rare'] };
+  const usageChip = (u) => (u && USAGE[u] ? `<span class="uchip ${USAGE[u][1]}">${USAGE[u][0]}</span>` : '');
+  function usagePicker(e) {
+    return `<div class="usage-pick" role="group" aria-label="用法">${Object.entries(USAGE).map(([k, [t, c]]) =>
+      `<button class="uchip ${c} ${e.usage === k ? 'on' : 'off'}" data-act="set-usage" data-id="${e.id}" data-u="${k}" aria-pressed="${e.usage === k}">${t}</button>`).join('')}</div>`;
+  }
   const zhShort = (e) => (e.type === 'sentence' ? e.zh : e.senses.map((s) => s.zh).join('；'));
 
   function highlight(en, word) {
@@ -201,7 +208,7 @@
   const speakBtn = (text, label = '播放發音') => `<button class="icon-btn" data-act="speak" data-text="${esc(text)}" aria-label="${label}">${ic('speaker')}</button>`;
 
   function sensesBlock(e) {
-    return `<ol class="senses">${e.senses.map((s) => `<li><span class="pos">${esc(s.pos)}</span><span>${esc(s.zh)}</span></li>`).join('')}</ol>`;
+    return `<ol class="senses">${e.senses.map((s) => `<li><span class="pos">${esc(s.pos)}</span><span>${esc(s.zh)} ${usageChip(s.u)}</span></li>`).join('')}</ol>`;
   }
   function examplesBlock(e) {
     return `<ul class="examples">${e.examples.map((x) => `
@@ -241,7 +248,7 @@
     return `<li class="row">
       <a class="row-main" href="#/${opts.toResult ? 'result' : 'entry'}/${e.id}">
         <span class="row-title ${e.type === 'sentence' ? 'is-sent' : ''}">${e.type === 'sentence' ? '' : ''}${esc(e.text)}</span>
-        <span class="row-sub">${e.type === 'sentence' ? '<span class="tag-s">句子</span>' : ''}${esc(zhShort(e))}</span>
+        <span class="row-sub">${e.type === 'sentence' ? '<span class="tag-s">句子</span>' : ''}${usageChip(e.usage)}${esc(zhShort(e))}</span>
       </a>
       <div class="row-meta">
         <button class="icon-btn row-speak" data-act="speak" data-text="${esc(e.text)}" aria-label="播放發音">${ic('speaker')}</button>
@@ -315,7 +322,7 @@
           <h2 class="headword" lang="en">${esc(e.text)}</h2>
           ${speakBtn(e.text)}
         </div>
-        ${e.ipa ? `<div class="ipa">${esc(e.ipa)}</div>` : '<div class="ipa muted">（無音標）</div>'}
+        <div class="ipa-line">${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : '<span class="ipa muted">（無音標）</span>'}${usageChip(e.usage)}</div>
         ${starBtn(e, true)}
       </header>
       <section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
@@ -381,6 +388,7 @@
       sentence: real.filter((e) => e.type === 'sentence').length,
     };
     let list = real.filter((e) => (L.filter === 'all') || (L.filter === 'star' && e.starred) || (L.filter === e.type));
+    if (L.usage !== 'all') list = list.filter((e) => e.usage === L.usage);
     if (L.q) {
       const q = L.q.toLowerCase();
       list = list.filter((e) => e.text.toLowerCase().includes(q) || zhShort(e).includes(L.q) || e.tags.includes(L.q.replace('#', '')));
@@ -399,6 +407,7 @@
         <label class="lib-search">${ic('search')}<input id="lib-q" type="search" placeholder="搜尋英文、中文或標籤（例：07)" value="${esc(L.q)}"></label>
         <div class="filter-row">
           <div class="fchips">${f('all', '全部')}${f('star', '星號')}${f('word', '單字')}${f('sentence', '句子')}</div>
+          <div class="fchips usage-filter"><span class="muted small">用法</span>${[['all', '全部'], ['daily', '生活'], ['formal', '正式'], ['rare', '很少用']].map(([k, t]) => `<button class="fchip ${L.usage === k ? 'on' : ''}" data-act="lib-usage" data-u="${k}">${t}</button>`).join('')}</div>
           <label class="sort">排序
             <select id="lib-sort">
               <option value="recent" ${L.sort === 'recent' ? 'selected' : ''}>最近查詢</option>
@@ -453,10 +462,13 @@
           ${speakBtn(e.text)}
         </div>
         ${e.type === 'word' ? (e.ipa ? `<div class="ipa">${esc(e.ipa)}</div>` : '<div class="ipa muted">（無音標）</div>') : ''}
+        ${e.type === 'word' ? `<div class="usage-row"><span class="muted small">用法</span>${usagePicker(e)}</div>` : ''}
         ${starBtn(e, true)}
       </header>
       ${stats}
       ${body}
+      ${e.fixes ? `<section class="block"><h3>更正紀錄</h3><ul class="fixes">${e.fixes.map((x) => `
+        <li><span class="fix-field">${esc(x.field)}</span><span class="fix-from" lang="en">${esc(x.from)}</span><span class="fix-to" lang="en">${esc(x.to)}</span><span class="muted small">${esc(x.why)} · 匯入時更正（#${esc(x.file)}）</span></li>`).join('')}</ul></section>` : ''}
       <section class="block"><h3>標籤</h3><div class="chips">${tags}</div></section>
       <div class="danger-row">
         <button class="btn ghost" data-act="query" data-text="${esc(e.text)}" data-mode="${e.type}">重新查詢</button>
@@ -465,57 +477,46 @@
     };
   }
 
-  /* ---------- 畫面：複習 ---------- */
-  function reviewPool() {
-    const R = S.reviewSetup;
-    let pool = S.entries.filter((e) => e.starred);
-    if (R.range === 'due') pool = pool.filter((e) => e.review.due && e.review.due <= Date.now());
-    if (R.range === 'tag') pool = pool.filter((e) => e.tags.includes(R.tag));
-    if (R.range === 'recent') pool = pool.filter((e) => Date.now() - e.added < 7 * 86400000);
-    if (R.range === 'wrong') pool = pool.filter((e) => e.review.wrong > 0);
-    if (R.mode !== 'flash') pool = pool.filter((e) => e.type === 'word');
-    return pool;
+  /* ---------- 複習 ---------- */
+  // 間隔重複（簡化版）：記住了 → 間隔照階梯拉長；模糊 → 明天；不熟 → 明天，並在這一輪最後再考一次
+  const DAYMS = 86400000;
+  const LADDER = [1, 3, 7, 16, 35, 80];
+  const KIND = {
+    flash: ['閃卡', '看英文想中文，翻面對答案'],
+    reverse: ['反向閃卡', '看中文想英文，比較難，但記得最牢'],
+    cloze: ['例句挖空', '從你自己的例句選出正確的字'],
+    confuse: ['易混淆辨析', '選項只有同組的字，專練分辨'],
+    listen: ['聽發音選字', '聽系統語音，選出聽到的字'],
+  };
+  const isDue = (e) => e.starred && e.review.due && e.review.due <= Date.now();
+  const isLeech = (e) => e.starred && e.review.wrong >= 2;
+
+  function todayPlan() {
+    const skip = (e) => !(S.reviewSetup.skipRare && e.usage === 'rare');
+    const due = S.entries.filter((e) => isDue(e) && e.review.status !== 'new' && skip(e));
+    const fresh = S.entries.filter((e) => isDue(e) && e.review.status === 'new' && skip(e)).slice(0, Number(S.settings.newPerDay));
+    return { due, fresh, list: [...due, ...fresh] };
   }
 
-  function viewReviewHome() {
+  // 每日複習的題型自動混合：新字先認得，常錯的練辨析，熟一點的改考反向和聽力
+  function pickKind(e) {
+    if (e.type === 'sentence' || e.review.status === 'new') return 'flash';
+    if (e.group && (e.review.wrong > 0 || Math.random() < 0.5)) return 'confuse';
+    if (e.review.right >= 2) return Math.random() < 0.5 ? 'reverse' : 'listen';
+    return 'cloze';
+  }
+
+  function customPool() {
     const R = S.reviewSetup;
-    const starred = S.entries.filter((e) => e.starred);
-    const due = starred.filter((e) => e.review.due && e.review.due <= Date.now());
-    const pool = reviewPool();
-    const tags = [...new Set(starred.flatMap((e) => e.tags))].sort();
-    const opt = (group, val, title, sub) => `
-      <button class="opt ${R[group] === val ? 'on' : ''}" data-act="rv-set" data-k="${group}" data-v="${val}" aria-pressed="${R[group] === val}">
-        <span class="opt-t">${title}</span>${sub ? `<span class="opt-s">${sub}</span>` : ''}</button>`;
-    return {
-      title: '複習', tab: 'review',
-      html: `
-      <div class="rv-summary">
-        <div><span class="stat-n tnum">${due.length}</span><span class="stat-l">今天到期</span></div>
-        <div><span class="stat-n tnum">${starred.length}</span><span class="stat-l">星號總數</span></div>
-        <div><span class="stat-n tnum">${starred.filter((e) => e.review.status === 'mastered').length}</span><span class="stat-l">已熟記</span></div>
-      </div>
-      <section class="block"><h3>範圍</h3>
-        <div class="opts">
-          ${opt('range', 'due', '今天到期', `${due.length} 個`)}
-          ${opt('range', 'all', '全部星號', `${starred.length} 個`)}
-          ${opt('range', 'recent', '最近 7 天加入', '')}
-          ${opt('range', 'wrong', '曾經答錯的', '')}
-          ${opt('range', 'tag', '依標籤', '')}
-        </div>
-        ${R.range === 'tag' ? `<div class="chips tag-pick">${tags.map((t) => `<button class="fchip ${R.tag === t ? 'on' : ''}" data-act="rv-set" data-k="tag" data-v="${t}">#${t}</button>`).join('')}</div>` : ''}
-      </section>
-      <section class="block"><h3>題型</h3>
-        <div class="opts">
-          ${opt('mode', 'flash', '閃卡', '看字想意思，翻面對答案')}
-          ${opt('mode', 'cloze', '例句挖空', '從例句選出正確的字')}
-          ${opt('mode', 'listen', '聽發音選字', '聽系統語音，選出聽到的字')}
-        </div>
-      </section>
-      <div class="start-bar">
-        <span class="muted">這次會複習 <b class="tnum">${Math.min(pool.length, R.count)}</b> 個</span>
-        <button class="btn primary" data-act="rv-start" ${pool.length ? '' : 'disabled'}>開始複習</button>
-      </div>`,
-    };
+    let pool = S.entries.filter((e) => e.starred);
+    if (R.range === 'due') pool = pool.filter(isDue);
+    if (R.range === 'tag') pool = pool.filter((e) => e.tags.includes(R.tag));
+    if (R.range === 'recent') pool = pool.filter((e) => Date.now() - e.added < 7 * DAYMS);
+    if (R.range === 'leech') pool = pool.filter(isLeech);
+    if (R.skipRare) pool = pool.filter((e) => e.usage !== 'rare');
+    if (R.mode !== 'flash' && R.mode !== 'mix') pool = pool.filter((e) => e.type === 'word');
+    if (R.mode === 'confuse') pool = pool.filter((e) => e.group);
+    return pool;
   }
 
   function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -528,60 +529,91 @@
     return shuffle([e, ...same, ...rest].slice(0, 4));
   }
 
-  function startReview() {
+  function makeItem(e, kind) {
+    if (kind === 'confuse' && !e.group) kind = 'cloze';
+    let options = null;
+    if (kind === 'cloze' || kind === 'listen') options = optionsFor(e).map((o) => o.id);
+    if (kind === 'confuse') options = shuffle(S.groups[e.group].members);
+    const ex = e.examples ? e.examples[Math.floor(Math.random() * e.examples.length)] : null;
+    return { id: e.id, kind, options, ex, result: null, next: '' };
+  }
+
+  function startSession(list, mode, title) {
+    if (!list.length) { toast('沒有要複習的字'); return; }
+    S.session = { mode, title, i: 0, flipped: false, picked: null, items: shuffle(list).map((e) => makeItem(e, mode === 'mix' ? pickKind(e) : mode)) };
+    go('review/quiz');
+  }
+  const startToday = () => startSession(todayPlan().list, 'mix', '今天的複習');
+  const startCustom = () => { const R = S.reviewSetup; startSession(customPool().slice(0, R.count), R.mode, R.mode === 'mix' ? '混合複習' : KIND[R.mode][0]); };
+
+  function viewReviewHome() {
     const R = S.reviewSetup;
-    const pool = shuffle(reviewPool()).slice(0, R.count);
-    S.session = {
-      mode: R.mode, i: 0, flipped: false, picked: null,
-      items: pool.map((e) => ({ id: e.id, options: R.mode === 'flash' ? null : optionsFor(e).map((o) => o.id), ex: e.examples ? e.examples[Math.floor(Math.random() * e.examples.length)] : null, result: null })),
+    const starred = S.entries.filter((e) => e.starred);
+    const plan = todayPlan();
+    const leeches = starred.filter(isLeech);
+    const tags = [...new Set(starred.flatMap((e) => e.tags))].sort();
+    const mins = Math.max(1, Math.round(plan.list.length * 0.4));
+    const opt = (group, val, title, sub) => `
+      <button class="opt ${R[group] === val ? 'on' : ''}" data-act="rv-set" data-k="${group}" data-v="${val}" aria-pressed="${R[group] === val}">
+        <span class="opt-t">${title}</span>${sub ? `<span class="opt-s">${sub}</span>` : ''}</button>`;
+    return {
+      title: '複習', tab: 'review',
+      html: `
+      <section class="today">
+        <span class="today-l">今天的複習</span>
+        <span class="today-n"><b class="tnum">${plan.list.length}</b> 個字 · 約 ${mins} 分鐘</span>
+        <span class="today-s">到期 ${plan.due.length} 個 ＋ 新字 ${plan.fresh.length} 個（每天最多 ${S.settings.newPerDay} 個）</span>
+        <button class="btn today-btn" data-act="rv-today" ${plan.list.length ? '' : 'disabled'}>開始今天的複習</button>
+        <span class="today-s">題型會自動混合：新字用閃卡，常錯的練易混淆辨析，熟一點的改考反向和聽力。</span>
+      </section>
+      <label class="check skip-rare"><input type="checkbox" id="rv-skip" ${R.skipRare ? 'checked' : ''}> 略過標成 ${usageChip('rare')} 的字</label>
+      ${leeches.length ? `<section class="block leech">
+        <div class="block-head"><h3>頑固字 · 答錯 2 次以上</h3><button class="link" data-act="rv-leech">專門練 ${ic('chev')}</button></div>
+        <div class="chips">${leeches.map((e) => `<a class="chip-link" href="#/entry/${e.id}"><b>${esc(e.text)}</b> 錯 ${e.review.wrong} 次</a>`).join('')}</div>
+      </section>` : ''}
+      <div class="rv-summary">
+        <div><span class="stat-n tnum">${starred.length}</span><span class="stat-l">複習中的字</span></div>
+        <div><span class="stat-n tnum">${starred.filter((e) => e.review.status === 'learning').length}</span><span class="stat-l">學習中</span></div>
+        <div><span class="stat-n tnum">${starred.filter((e) => e.review.status === 'mastered').length}</span><span class="stat-l">已熟記</span></div>
+      </div>
+      <details class="custom" ${R.open ? 'open' : ''}>
+        <summary>自訂複習（選範圍和題型）</summary>
+        <section class="block"><h3>範圍</h3>
+          <div class="opts">
+            ${opt('range', 'all', '全部', `${starred.length} 個`)}
+            ${opt('range', 'due', '今天到期', '')}
+            ${opt('range', 'recent', '最近 7 天加入', '')}
+            ${opt('range', 'leech', '頑固字', `${leeches.length} 個`)}
+            ${opt('range', 'tag', '依檔案標籤', '')}
+          </div>
+          ${R.range === 'tag' ? `<div class="chips tag-pick">${tags.map((t) => `<button class="fchip ${R.tag === t ? 'on' : ''}" data-act="rv-set" data-k="tag" data-v="${t}">#${t}</button>`).join('')}</div>` : ''}
+        </section>
+        <section class="block"><h3>題型</h3>
+          <div class="opts">
+            ${opt('mode', 'mix', '自動混合', '跟每日複習一樣')}
+            ${Object.entries(KIND).map(([k, [t, d]]) => opt('mode', k, t, d)).join('')}
+          </div>
+        </section>
+        <div class="start-bar">
+          <span class="muted">這次會複習 <b class="tnum">${Math.min(customPool().length, R.count)}</b> 個</span>
+          <button class="btn primary" data-act="rv-start" ${customPool().length ? '' : 'disabled'}>開始</button>
+        </div>
+      </details>`,
+      after() {
+        document.getElementById('rv-skip').addEventListener('change', (ev) => { R.skipRare = ev.target.checked; render(); });
+        document.querySelector('details.custom').addEventListener('toggle', (ev) => { R.open = ev.target.open; });
+      },
     };
-    go('review/' + R.mode);
   }
 
   function progress(s) {
     const pct = Math.round((s.i / s.items.length) * 100);
     return `<div class="progress"><div class="bar"><span style="width:${pct}%"></span></div><span class="tnum small muted">${s.i + 1} / ${s.items.length}</span></div>`;
   }
-
-  function sessionGuard(mode) {
-    const s = S.session;
-    if (!s || s.mode !== mode) {
-      S.reviewSetup.mode = mode;
-      S.reviewSetup.range = 'all';
-      startReview();
-      return null;
-    }
-    return s;
-  }
-
-  function viewFlash() {
-    const s = sessionGuard('flash'); if (!s) return { title: '', html: '' };
-    const it = s.items[s.i]; const e = byId(it.id);
-    const back = e.type === 'word'
-      ? `${sensesBlock(e)}<div class="ex-en small">${highlight(e.examples[0].en, e.text)}</div><div class="ex-zh">${esc(e.examples[0].zh)}</div>`
-      : `<p class="sent-zh">${esc(e.zh)}</p>`;
-    return {
-      title: '閃卡', tab: 'review', back: '#/review', focus: true,
-      html: `${progress(s)}
-      <button class="flash ${s.flipped ? 'flipped' : ''}" data-act="flip" aria-label="翻面">
-        <span class="flash-front">
-          <span class="${e.type === 'word' ? 'headword' : 'flash-sent'}" lang="en">${esc(e.text)}</span>
-          ${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}
-          ${!s.flipped ? '<span class="muted small flip-hint">點一下翻面</span>' : ''}
-        </span>
-        ${s.flipped ? `<span class="flash-back">${back}</span>` : ''}
-      </button>
-      <div class="center-row">${speakBtn(e.text)}</div>
-      ${s.flipped ? `<div class="grade">
-        <button class="btn grade-0" data-act="grade" data-g="0">不熟</button>
-        <button class="btn grade-1" data-act="grade" data-g="1">模糊</button>
-        <button class="btn grade-2" data-act="grade" data-g="2">記住了</button>
-      </div>` : '<div class="grade placeholder"><button class="btn primary wide" data-act="flip">顯示答案</button></div>'}`,
-    };
-  }
+  const kindLabel = (it) => `<p class="q-label">${KIND[it.kind][0]}${it.again ? ' · 再考一次' : ''}</p>`;
 
   function choiceList(s, it) {
-    return `<div class="choices">${it.options.map((oid) => {
+    return `<div class="choices ${it.options.length === 2 ? 'two' : ''}">${it.options.map((oid) => {
       const o = byId(oid);
       let cls = '';
       if (s.picked) {
@@ -590,75 +622,137 @@
         else cls = 'dim';
       }
       return `<button class="choice ${cls}" data-act="pick" data-id="${oid}" ${s.picked ? 'disabled' : ''} lang="en">
-        <span>${esc(o.text)}</span>${s.picked ? `<span class="choice-zh">${esc(o.senses[0].zh)}</span>` : ''}</button>`;
+        <span>${esc(o.text)}</span>${s.picked ? `<span class="choice-zh">${esc(o.senses[0].zh)} ${usageChip(o.usage)}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
-  const nextBar = (s) => (s.picked ? `<div class="start-bar"><span class="${s.picked === s.items[s.i].id ? 'ok-txt' : 'bad-txt'}">${s.picked === s.items[s.i].id ? '答對了' : '答錯了，已記下來'}</span><button class="btn primary" data-act="next">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>` : '');
+  const nextBar = (s) => (s.picked ? `<div class="start-bar"><span class="${s.picked === s.items[s.i].id ? 'ok-txt' : 'bad-txt'}">${s.picked === s.items[s.i].id ? '答對了' : '答錯了，這一輪最後會再考一次'}</span><button class="btn primary" data-act="next">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>` : '');
+  const gradeBar = (s) => (s.flipped ? `<div class="grade">
+        <button class="btn grade-0" data-act="grade" data-g="0">不熟</button>
+        <button class="btn grade-1" data-act="grade" data-g="1">模糊</button>
+        <button class="btn grade-2" data-act="grade" data-g="2">記住了</button>
+      </div>` : '<div class="grade placeholder"><button class="btn primary wide" data-act="flip">顯示答案</button></div>');
 
-  function viewCloze() {
-    const s = sessionGuard('cloze'); if (!s) return { title: '', html: '' };
-    const it = s.items[s.i]; const e = byId(it.id);
+  function blanked(it, e, picked) {
     const stem = e.text.replace(/e$/, '');
-    const blanked = esc(it.ex.en).replace(new RegExp(`\\b${stem}\\w*`, 'i'), (m) => (s.picked ? `<mark>${m}</mark>` : '<span class="blank">＿＿＿＿</span>'));
-    return {
-      title: '例句挖空', tab: 'review', back: '#/review', focus: true,
-      html: `${progress(s)}
-      <section class="q-card">
-        <p class="q-label">選出空格裡的字</p>
-        <p class="cloze" lang="en">${blanked}</p>
-        <p class="ex-zh">${esc(it.ex.zh)}</p>
-      </section>
-      ${choiceList(s, it)}${nextBar(s)}`,
-    };
+    return esc(it.ex.en).replace(new RegExp(`\\b${stem}\\w*`, 'i'), (m) => (picked ? `<mark>${m}</mark>` : '<span class="blank">＿＿＿＿</span>'));
   }
 
-  function viewListen() {
-    const s = sessionGuard('listen'); if (!s) return { title: '', html: '' };
-    const it = s.items[s.i]; const e = byId(it.id);
-    return {
-      title: '聽發音選字', tab: 'review', back: '#/review', focus: true,
-      html: `${progress(s)}
+  const RENDER = {
+    flash(s, it, e) {
+      const back = e.type === 'word'
+        ? `${sensesBlock(e)}<div class="ex-en small">${highlight(e.examples[0].en, e.text)}</div><div class="ex-zh">${esc(e.examples[0].zh)}</div>`
+        : `<p class="sent-zh">${esc(e.zh)}</p>`;
+      return `
+      <button class="flash ${s.flipped ? 'flipped' : ''}" data-act="flip" aria-label="翻面">
+        <span class="flash-front">
+          ${kindLabel(it)}
+          <span class="${e.type === 'word' ? 'headword' : 'flash-sent'}" lang="en">${esc(e.text)}</span>
+          ${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}
+          ${usageChip(e.usage)}
+          ${!s.flipped ? '<span class="muted small flip-hint">先想中文意思，再點一下翻面</span>' : ''}
+        </span>
+        ${s.flipped ? `<span class="flash-back">${back}</span>` : ''}
+      </button>
+      <div class="center-row">${speakBtn(e.text)}</div>${gradeBar(s)}`;
+    },
+    reverse(s, it, e) {
+      return `
+      <button class="flash ${s.flipped ? 'flipped' : ''}" data-act="flip" aria-label="翻面">
+        <span class="flash-front">
+          ${kindLabel(it)}
+          ${sensesBlock(e)}
+          ${usageChip(e.usage)}
+          ${!s.flipped ? '<span class="muted small flip-hint">先在心裡拼出英文，再點一下翻面</span>' : ''}
+        </span>
+        ${s.flipped ? `<span class="flash-back center-back"><span class="headword" lang="en">${esc(e.text)}</span>${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}<span class="ex-en small">${highlight(e.examples[0].en, e.text)}</span></span>` : ''}
+      </button>
+      ${s.flipped ? `<div class="center-row">${speakBtn(e.text)}</div>` : ''}${gradeBar(s)}`;
+    },
+    cloze(s, it, e) {
+      return `
+      <section class="q-card">
+        ${kindLabel(it)}
+        <p class="cloze" lang="en">${blanked(it, e, s.picked)}</p>
+        <p class="ex-zh">${esc(it.ex.zh)}</p>
+      </section>
+      ${choiceList(s, it)}${nextBar(s)}`;
+    },
+    confuse(s, it, e) {
+      const g = S.groups[e.group];
+      return `
+      <section class="q-card">
+        ${kindLabel(it)}<span class="muted small">${esc(g.name)}</span>
+        <p class="cloze" lang="en">${blanked(it, e, s.picked)}</p>
+        <p class="ex-zh">${esc(it.ex.zh)}</p>
+      </section>
+      ${choiceList(s, it)}
+      ${s.picked ? `<p class="confuse-note">${ic('alert')} ${esc(g.note)}</p>` : ''}${nextBar(s)}`;
+    },
+    listen(s, it, e) {
+      return `
       <section class="q-card listen">
-        <p class="q-label">聽聽看，選出你聽到的字</p>
+        ${kindLabel(it)}
         <div class="listen-btns">
           <button class="play-big" data-act="speak" data-text="${esc(e.text)}" aria-label="播放">${ic('speaker')}</button>
           <button class="btn small ghost" data-act="speak" data-text="${esc(e.text)}" data-rate="0.6">慢速再聽</button>
         </div>
       </section>
-      ${choiceList(s, it)}${nextBar(s)}`,
-    };
+      ${choiceList(s, it)}${nextBar(s)}`;
+    },
+  };
+
+  function viewQuiz() {
+    const s = S.session;
+    if (!s) { startToday(); return { title: '', html: '' }; }
+    const it = s.items[s.i]; const e = byId(it.id);
+    return { title: s.title, tab: 'review', back: '#/review', focus: true, html: progress(s) + RENDER[it.kind](s, it, e) };
   }
+
+  // 舊的直接連結（#/review/flash 等）：用該題型開一輪
+  const viewStartMode = (mode) => () => { S.reviewSetup.mode = mode; S.reviewSetup.range = 'all'; startCustom(); return { title: '', html: '' }; };
 
   function viewReviewResult() {
     const s = S.session;
     if (!s || s.items.some((x) => x.result === null)) return viewReviewHome();
-    const ok = s.items.filter((x) => x.result === 'ok').length;
-    const modeName = { flash: '閃卡', cloze: '例句挖空', listen: '聽發音選字' }[s.mode];
+    const firsts = s.items.filter((x) => !x.again);
+    const ok = firsts.filter((x) => x.result === 'ok').length;
     const label = { ok: ['記住了', 'ok'], fuzzy: ['模糊', 'fuzzy'], bad: ['不熟', 'bad'] };
     return {
       title: '複習結果', tab: 'review', back: '#/review',
       html: `
       <section class="result-hero">
-        <span class="result-n tnum">${ok}<small>/${s.items.length}</small></span>
-        <span class="muted">${modeName} · 答對或記住的數量</span>
+        <span class="result-n tnum">${ok}<small>/${firsts.length}</small></span>
+        <span class="muted">${esc(s.title)} · 第一次就答對或記住的數量</span>
       </section>
-      <ul class="list">${s.items.map((x) => {
+      <ul class="list">${firsts.map((x) => {
         const e = byId(x.id); const [t, c] = label[x.result];
-        return `<li class="row"><a class="row-main" href="#/entry/${e.id}"><span class="row-title ${e.type === 'sentence' ? 'is-sent' : ''}">${esc(e.text)}</span><span class="row-sub">${esc(zhShort(e))}</span></a><div class="row-meta"><span class="res res-${c}">${t}</span></div></li>`;
+        return `<li class="row"><a class="row-main" href="#/entry/${e.id}"><span class="row-title ${e.type === 'sentence' ? 'is-sent' : ''}">${esc(e.text)}</span><span class="row-sub">${usageChip(e.usage)}${KIND[x.kind][0]} · 下次：${x.next}</span></a><div class="row-meta"><span class="res res-${c}">${t}</span></div></li>`;
       }).join('')}</ul>
       <div class="btn-col">
-        ${ok < s.items.length ? '<button class="btn primary" data-act="rv-retry">只再練不熟的</button>' : ''}
+        ${ok < firsts.length ? '<button class="btn primary" data-act="rv-retry">只再練不熟的</button>' : ''}
         <a class="btn ghost" href="#/review">回複習首頁</a>
       </div>
-      <p class="muted small">記住了 → 下次間隔拉長；模糊 → 明天再出現；不熟 → 這次結束前再出現一次（原型只示意）。</p>`,
+      <p class="muted small">間隔重複：記住了 → 間隔拉長（1、3、7、16、35 天…）；模糊 → 明天；不熟 → 明天，而且這一輪最後再考一次。</p>`,
     };
   }
 
   function grade(result) {
     const s = S.session; const it = s.items[s.i]; const e = byId(it.id);
     it.result = result;
-    if (result === 'ok') { e.review.right++; e.review.status = e.review.right >= 5 ? 'mastered' : 'learning'; }
-    else { e.review.wrong++; e.review.status = 'learning'; }
+    if (it.again) return; // 同一輪的再考一次，不重複計分
+    const r = e.review;
+    r.step = r.step || 0;
+    if (result === 'ok') {
+      const days = LADDER[Math.min(r.step, LADDER.length - 1)];
+      r.step++; r.right++; r.due = Date.now() + days * DAYMS;
+      r.status = r.step >= 4 ? 'mastered' : 'learning';
+      it.next = `${days} 天後`;
+    } else {
+      if (result === 'bad') { r.wrong++; r.step = 0; }
+      r.status = 'learning'; r.due = Date.now() + DAYMS;
+      it.next = '明天';
+      if (result === 'bad') s.items.push({ ...makeItem(e, it.kind), again: true });
+    }
   }
   function advance() {
     const s = S.session;
@@ -671,7 +765,7 @@
     const item = (href, icon, title, sub) => `<li><a class="menu-item" href="${href}">${ic(icon)}<span class="menu-text"><span>${title}</span><span class="muted small">${sub}</span></span>${ic('chev', 'chev')}</a></li>`;
     const screens = [
       ['#/search', '查詢首頁'], ['#/result/affect', '單字結果'], ['#/result/s-policy', '句子翻譯結果'], ['#/share', '分享進來'],
-      ['#/library', '單字庫'], ['#/entry/adapt', '單字詳情'], ['#/review', '複習首頁'], ['#/review/flash', '閃卡'],
+      ['#/library', '單字庫'], ['#/entry/adapt', '單字詳情'], ['#/review', '複習首頁'], ['#/review/quiz', '今天的複習'], ['#/review/flash', '閃卡'], ['#/review/reverse', '反向閃卡'], ['#/review/confuse', '易混淆辨析'],
       ['#/review/cloze', '例句挖空'], ['#/review/listen', '聽發音選字'], ['#/import', '匯入精靈'], ['#/backup', '匯出/匯入 JSON'], ['#/settings', '設定'],
     ];
     return {
@@ -708,8 +802,17 @@
     { id: 'i5', file: '22 片語.docx', kind: '無法辨識', text: '第 34 行「look up to / look down on」是片語組，要拆成兩張嗎？', choices: ['拆成兩張（同組）', '合成一張', '略過'] },
   ];
 
+  const CORR = [
+    { id: 'c1', word: 'adopt', field: '中文', file: '07', from: '適應；改編', to: '採用；收養', why: '和 adapt 的意思寫反了。' },
+    { id: 'c2', word: 'adept', field: '詞性', file: '07', from: 'v.', to: 'adj.', why: 'adept 是形容詞「熟練的」。' },
+    { id: 'c3', word: 'adept', field: '例句', file: '07', from: 'She is adept in handle difficult customers.', to: 'She is adept at handling difficult customers.', why: 'adept 後面接 at + V-ing。' },
+    { id: 'c4', word: 'receive', field: '拼字', file: '05', from: 'I will recieve the package tomorrow.', to: 'I will receive the package tomorrow.', why: 'receive 是 e 在 i 前面。' },
+    { id: 'c5', word: 'effect', field: '例句翻譯', file: '03', from: '這藥一小時後有副作用。', to: '這藥大約一小時後生效。', why: 'take effect 是「生效」，不是副作用。' },
+    { id: 'c6', word: 'complement', field: '音標', file: '12', from: '[kəmˈplimənt]', to: '/ˈkɑːmplɪment/', why: '重音在第一音節。' },
+  ];
+
   function stepper(n) {
-    const names = ['選擇檔案', '解析預覽', '確認選項', '完成'];
+    const names = ['選擇檔案', '解析預覽', '更正內容', '確認選項', '完成'];
     return `<ol class="stepper">${names.map((t, i) => `<li class="${i + 1 < n ? 'done' : ''} ${i + 1 === n ? 'cur' : ''}"><span class="step-n">${i + 1 < n ? '✓' : i + 1}</span><span>${t}</span></li>`).join('')}</ol>`;
   }
 
@@ -757,6 +860,32 @@
       </section>
       <div class="start-bar"><button class="btn ghost" data-act="imp-step" data-n="1">上一步</button><button class="btn primary" data-act="imp-step" data-n="3">下一步</button></div>`;
     } else if (I.step === 3) {
+      const done = CORR.filter((c) => I.fixed[c.id]).length;
+      body = `
+      <p class="lead">匯入前先把內容核對一遍。有錯的地方列在下面，你確認後才會放進單字庫和複習。</p>
+      <div class="stats three">
+        <div><span class="stat-n tnum warn-txt">41</span><span class="stat-l">建議更正</span></div>
+        <div><span class="stat-n tnum">${done}</span><span class="stat-l">已處理</span></div>
+        <div><span class="stat-n tnum">1,236</span><span class="stat-l">已標用法</span></div>
+      </div>
+      <ul class="issues">${CORR.map((c) => {
+        const st = I.fixed[c.id];
+        return `<li class="issue fix ${st ? 'resolved' : ''}">
+          <div class="issue-head"><b lang="en">${esc(c.word)}</b><span class="fix-field">${esc(c.field)}</span><span class="muted small">#${esc(c.file)}</span></div>
+          <div class="fix-pair"><span class="fix-from ${st === 'keep' ? 'kept' : ''}" lang="en">${esc(c.from)}</span><span class="fix-to ${st === 'keep' ? 'rejected' : ''}" lang="en">${esc(c.to)}</span></div>
+          <p class="muted small">${esc(c.why)}</p>
+          <div class="chips">
+            <button class="fchip ${st === 'accept' ? 'on' : ''}" data-act="imp-fix" data-id="${c.id}" data-v="accept">採用更正</button>
+            <button class="fchip ${st === 'keep' ? 'on' : ''}" data-act="imp-fix" data-id="${c.id}" data-v="keep">保留原文</button>
+            <button class="fchip" data-act="fake" data-msg="原型：這裡會出現編輯框，讓你自己改">自己改</button>
+          </div></li>`;
+      }).join('')}</ul>
+      <button class="link" data-act="imp-fix-all">其餘 35 處全部採用更正</button>
+      <section class="block panel"><h3>用法標記</h3>
+        <p class="note">每個字都會標上 ${usageChip('daily')} ${usageChip('formal')} ${usageChip('rare')}，之後在單字詳情可以改。</p>
+      </section>
+      <div class="start-bar"><button class="btn ghost" data-act="imp-step" data-n="2">上一步</button><button class="btn primary" data-act="imp-step" data-n="4">下一步</button></div>`;
+    } else if (I.step === 4) {
       body = `
       <section class="block"><h3>匯入選項</h3>
         <label class="set-row"><span>標籤規則</span><select id="imp-tag"><option>檔名開頭數字 → #標籤</option><option>整個檔名 → 標籤</option></select></label>
@@ -764,11 +893,11 @@
         <label class="set-row"><span>匯入後加入複習</span><select id="imp-star"><option>不要，我自己點星號</option><option>全部加星號</option></select></label>
       </section>
       <p class="muted small">匯入前會先自動備份目前資料。</p>
-      <div class="start-bar"><button class="btn ghost" data-act="imp-step" data-n="2">上一步</button><button class="btn primary" data-act="imp-step" data-n="4">匯入 1,236 張卡</button></div>`;
+      <div class="start-bar"><button class="btn ghost" data-act="imp-step" data-n="3">上一步</button><button class="btn primary" data-act="imp-step" data-n="5">匯入 1,236 張卡</button></div>`;
     } else {
       body = `
       <section class="result-hero">${ic('check', 'done-ic')}<span class="result-n small-n">匯入完成</span>
-        <span class="muted">新增 1,221 張卡 · 合併 15 張 · 建立 318 組易混淆</span></section>
+        <span class="muted">新增 1,221 張卡 · 合併 15 張 · 更正 41 處 · 建立 318 組易混淆</span></section>
       <div class="btn-col"><a class="btn primary" href="#/library">到單字庫看看</a><button class="btn ghost" data-act="imp-reset">重新走一次精靈</button></div>`;
     }
     return { title: '匯入 Word 單字簿', tab: 'more', back: '#/more', html: stepper(I.step) + body };
@@ -830,7 +959,8 @@
         <label class="set-row"><span>預設查詢模式</span>${sel('set-mode', 'defaultMode', [['word', '單字'], ['sentence', '句子']])}</label>
       </section>
       <section class="block panel"><h3>複習</h3>
-        <label class="set-row"><span>每次題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
+        <label class="set-row"><span>每天新字上限</span>${sel('set-new', 'newPerDay', [[10, '10'], [15, '15'], [20, '20'], [30, '30']])}</label>
+        <label class="set-row"><span>自訂複習題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
       </section>
       <section class="block panel"><h3>外觀</h3>
         <label class="set-row"><span>主題</span>${sel('set-theme', 'theme', [['light', '白底'], ['dark', '黑底'], ['system', '跟隨系統']])}</label>
@@ -870,9 +1000,12 @@
     [/^library$/, viewLibrary],
     [/^entry\/(.+)$/, viewEntry],
     [/^review$/, viewReviewHome],
-    [/^review\/flash$/, viewFlash],
-    [/^review\/cloze$/, viewCloze],
-    [/^review\/listen$/, viewListen],
+    [/^review\/quiz$/, viewQuiz],
+    [/^review\/flash$/, viewStartMode('flash')],
+    [/^review\/reverse$/, viewStartMode('reverse')],
+    [/^review\/cloze$/, viewStartMode('cloze')],
+    [/^review\/confuse$/, viewStartMode('confuse')],
+    [/^review\/listen$/, viewStartMode('listen')],
     [/^review\/result$/, viewReviewResult],
     [/^more$/, viewMore],
     [/^import$/, viewImport],
@@ -914,12 +1047,12 @@
     fake: (d) => toast(d.msg),
     'lib-filter': (d) => { S.lib.filter = d.f; render(); },
     'rv-set': (d) => { S.reviewSetup[d.k] = d.v; render(); },
-    'rv-start': () => startReview(),
+    'rv-start': () => startCustom(),
+    'rv-today': () => startToday(),
+    'rv-leech': () => { startSession(S.entries.filter(isLeech), 'mix', '頑固字特訓'); },
     'rv-retry': () => {
       const s = S.session;
-      const bad = s.items.filter((x) => x.result !== 'ok').map((x) => ({ ...x, result: null }));
-      S.session = { ...s, i: 0, flipped: false, picked: null, items: bad };
-      go('review/' + s.mode);
+      startSession(s.items.filter((x) => !x.again && x.result !== 'ok').map((x) => byId(x.id)), s.mode, s.title);
     },
     flip: () => { S.session.flipped = !S.session.flipped; render(); },
     grade: (d) => { grade(['bad', 'fuzzy', 'ok'][d.g]); advance(); },
@@ -933,7 +1066,11 @@
     'imp-pick': () => { S.imp.files = true; render(); },
     'imp-step': (d) => { S.imp.step = Number(d.n); render(); window.scrollTo(0, 0); },
     'imp-resolve': (d) => { S.imp.resolved[d.id] = d.v; render(); },
-    'imp-reset': () => { S.imp = { step: 1, files: false, resolved: {} }; render(); },
+    'imp-reset': () => { S.imp = { step: 1, files: false, resolved: {}, fixed: {} }; render(); },
+    'imp-fix': (d) => { S.imp.fixed[d.id] = d.v; render(); },
+    'imp-fix-all': () => { CORR.forEach((c) => { if (!S.imp.fixed[c.id]) S.imp.fixed[c.id] = 'accept'; }); render(); toast('其餘 35 處也會套用更正'); },
+    'set-usage': (d) => { const e = byId(d.id); e.usage = e.usage === d.u ? null : d.u; render(); },
+    'lib-usage': (d) => { S.lib.usage = d.u; render(); },
     'bk-export': () => { S.backup.exported = true; render(); toast('已產生 JSON 檔'); },
     'bk-pick': () => { S.backup.importPicked = true; render(); },
     'bk-strategy': (d, el) => { S.backup.strategy = el.value; },
