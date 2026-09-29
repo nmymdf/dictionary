@@ -1243,6 +1243,16 @@
 
   async function shareOrDownload(name, text) {
     const blob = new Blob([text], { type: 'application/json' });
+    // 在 claude.ai 預覽裡，下載要透過平台的 downloads 功能
+    if (window.claude && window.claude.use) {
+      try {
+        const dl = await window.claude.use('downloads');
+        if (dl) {
+          try { await dl.save({ filename: name, data: blob }); return 'download'; }
+          catch (err) { return err && err.code === 'declined' ? 'cancel' : 'fail'; }
+        }
+      } catch (err) { /* 改用一般下載 */ }
+    }
     try {
       const file = new File([blob], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)) {
@@ -1612,6 +1622,7 @@
     'bk-export': async () => {
       const r = await shareOrDownload(`danciben-${today()}.json`, JSON.stringify(exportData()));
       if (r === 'download') toast('已存到「下載」資料夾');
+      else if (r === 'fail') toast('這裡無法下載檔案，請用安裝好的 App 匯出');
       else if (r === 'shared') toast('已分享');
     },
     'bk-strategy': (d, el) => { S.backup.strategy = el.value; },
