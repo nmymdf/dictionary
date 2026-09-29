@@ -504,7 +504,7 @@
     return {
       title: '查詢結果', tab: 'search', back: '#/search',
       html: `
-      ${e.temp ? '' : `<div class="logged">${ic('clock')} 已記錄到查詢紀錄 · 第 ${e.count} 次查這個字</div>`}
+      ${e.temp || !e.count ? '' : `<div class="logged">${ic('clock')} 已記錄到查詢紀錄 · 第 ${e.count} 次查這個字</div>`}
       ${wordHeader(e, false)}
       ${pend || `
       <section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
@@ -524,7 +524,7 @@
     return {
       title: '句子翻譯', tab: 'search', back: '#/search',
       html: `
-      ${e.temp ? '' : `<div class="logged">${ic('clock')} 已記錄到查詢紀錄 · 第 ${e.count} 次</div>`}
+      ${e.temp || !e.count ? '' : `<div class="logged">${ic('clock')} 已記錄到查詢紀錄 · 第 ${e.count} 次</div>`}
       <section class="sent-card">
         <div class="sent-en" lang="en">${sentenceTokens(e.text)}</div>
         <p class="tap-hint">點句子裡的任何一個字就能直接查；有底線的字已在你的單字庫。</p>
@@ -677,7 +677,7 @@
       ${stats}
       ${body}
       ${fixesBlock(e)}
-      <section class="block"><h3>檔案標籤</h3><div class="chips">${tags}</div></section>
+      <section class="block"><h3>檔案標籤${e.tags.length > 1 ? ` <span class="muted">· 出現在 ${e.tags.length} 個檔案</span>` : ''}</h3><div class="chips">${tags}</div></section>
       <div class="danger-row">
         <button class="btn ghost" data-act="edit" data-id="${esc(e.id)}">${ic('pen')} 編輯</button>
         ${e.starred ? `<button class="btn ghost" data-act="suspend" data-id="${esc(e.id)}">${e.review.suspended ? '恢復複習' : '暫停複習'}</button>` : ''}
