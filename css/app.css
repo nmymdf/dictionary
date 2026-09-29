@@ -514,3 +514,61 @@ mark { background: var(--marker); color: inherit; padding: 0 2px; border-radius:
 .flash-front .q-label { margin-bottom: 6px; }
 .flash-front .senses { text-align: left; }
 .center-back { align-items: center; text-align: center; }
+
+/* ---------- 正式版新增 ---------- */
+.loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 32px 0; color: var(--muted); }
+.spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-box { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 12px; background: var(--bad-weak); color: var(--ink); }
+.error-box > .ic { color: var(--bad); }
+.error-box > div { flex: 1; min-width: 0; }
+
+.suggest { list-style: none; margin: -4px 0 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.suggest:empty { display: none; }
+.suggest li + li { border-top: 1px solid var(--line); }
+.suggest a { display: flex; gap: 12px; align-items: baseline; padding: 10px 16px; min-width: 0; }
+.suggest b { font-family: var(--font-word); font-weight: 600; flex: none; }
+.suggest span { color: var(--muted); font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.onboard .btn { align-self: flex-start; }
+
+.examples li.easy { border-left-color: var(--accent); }
+.easy-tag { display: inline-block; font-size: .7rem; font-weight: 600; color: var(--accent); background: var(--accent-weak); padding: 1px 7px; border-radius: 5px; margin-bottom: 4px; }
+.infl { margin: 0; font-family: var(--font-word); color: var(--ink); }
+.infl.small { font-size: .9rem; color: var(--muted); }
+.notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: .92rem; color: var(--muted); }
+.fix-note { font-size: .9rem; }
+.fixes .fix-note { color: var(--ink); }
+.tag { cursor: pointer; }
+
+.grade.four { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.grade.four .btn { flex-direction: column; gap: 0; padding: 6px 4px; line-height: 1.2; }
+.grade.four small { font-size: .7rem; font-weight: 500; opacity: .8; }
+.grade-3 { color: var(--u-formal); background: var(--u-formal-bg); border-color: transparent; }
+.progress .link { margin-left: 4px; }
+
+.forecast { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.fc-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.fc-bar { width: 60%; max-width: 28px; border-radius: 4px 4px 0 0; background: var(--accent); opacity: .75; }
+.fc-col:first-child .fc-bar { opacity: 1; }
+.fc-n { font-size: .75rem; color: var(--muted); }
+.fc-d { font-size: .72rem; color: var(--muted); }
+
+.spell-box { display: flex; gap: 8px; }
+.spell-box input { flex: 1; min-width: 0; min-height: 52px; padding: 0 16px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface); font-family: var(--font-word); font-size: 1.3rem; }
+.spell-box input:focus { outline: none; border-color: var(--accent); }
+.spell-ans { margin: 0; font-size: 1.05rem; }
+.spell-ans b { font-family: var(--font-word); color: var(--ok); font-size: 1.2rem; }
+.spell-ans s { color: var(--bad); }
+.listen-btns.row { flex-direction: row; justify-content: flex-start; gap: 6px; }
+
+.edit-form { display: flex; flex-direction: column; gap: 14px; }
+.edit-form label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: .9rem; }
+.edit-form label .muted { font-weight: 400; }
+.edit-form input, .edit-form textarea { font-weight: 400; font-size: 1rem; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); resize: vertical; }
+.edit-form input:focus, .edit-form textarea:focus { outline: none; border-color: var(--accent); }
+
+.help p { margin: 0; font-size: .95rem; }
+.stepper.three { grid-template-columns: repeat(3, 1fr); }
+.fchip.small { min-height: 30px; font-size: .8rem; padding: 0 10px; }
+label.btn { cursor: pointer; align-self: flex-start; }
+.danger-row .btn .ic { width: 1em; height: 1em; }
