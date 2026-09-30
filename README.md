@@ -15,12 +15,24 @@
 - **匯入 Word**：可以在 App 裡解析新的 .docx（單字筆記、表格、英中對照句子）。
 - 白底／黑底切換、字級、手機底部分頁／寬螢幕左側選單。
 
-## 安裝（第一次）
+## 安裝
 
-1. 在這個 repo 的 **Settings → Pages**，Source 選 **Deploy from a branch**，Branch 選放這份程式的分支、資料夾 `/ (root)`，按 Save。幾分鐘後會得到網址，例如 `https://nmymdf.github.io/dictionary/`。
-2. **Windows**：用 Chrome 或 Edge 開網址 → 網址列右邊的「安裝」圖示。
-3. **手機**：用 Chrome 開網址 → ⋮ →「加到主畫面」／「安裝應用程式」。
-4. 在 App 裡「更多 → 匯出 / 匯入 JSON → 選擇 JSON 檔」，選 `danciben-import.json`（在私人 repo `vocab-files`）。
+### Android 手機（App）
+
+1. 手機開 <https://github.com/nmymdf/dictionary/releases/latest/download/danciben.apk> 下載。
+2. 點下載好的 `danciben.apk` → 第一次會問「允許安裝未知應用程式」→ 允許 → 安裝。
+3. 打開「單字本」→ 查詢頁「去匯入」→「選擇 JSON 檔」→ 選 `danciben-import.json`。
+4. 以後有新版：再下載一次、直接安裝，資料會保留（簽章固定）。
+
+App 裡：發音用手機的文字轉語音；匯出備份會存到「下載/單字本」並開分享選單（Quick Share 到電腦）；在其他 App 選取英文 →「單字本」或「分享 → 單字本」可以直接查。
+
+每次推送程式碼，GitHub Actions（`.github/workflows/android.yml`）會自動編譯並發佈新版到 Releases。
+
+### Windows（PWA）
+
+1. 在這個 repo 的 **Settings → Pages** 開啟 GitHub Pages（Deploy from a branch，資料夾 `/ (root)`）。
+2. 用 Chrome 或 Edge 開網址 → 網址列右邊的「安裝」圖示。
+3. 「更多 → 匯出 / 匯入 JSON」匯入 `danciben-import.json`（在私人 repo `vocab-files`）或手機匯出的備份。
 
 ## 開發
 
@@ -36,6 +48,7 @@ python3 -m http.server 8000     # 開 http://localhost:8000
 - `js/docx.js`、`js/vendor/jszip.min.js`：在 App 裡解析 Word
 - `sw.js`、`manifest.webmanifest`：PWA（離線外殼、分享目標）
 - `tools/build_import.py`：把整理好的單字卡（私人 repo）組成匯入用 JSON
-- `tools/bundle_preview.py`：打包成單一 HTML 預覽
+- `tools/bundle_preview.py`：打包成單一 HTML（加 `--standalone` 可以直接開檔案）
+- `android/`：Android App（WebView 外殼，提供發音、選檔、存檔、分享進來）
 
 這個 repo 是公開的，**不放任何單字資料**；資料在私人 repo `vocab-files`。
