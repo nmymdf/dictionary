@@ -181,11 +181,18 @@
   const hasWord = (en, word) => wordRe(word).test(en);
 
   /* ---------- 發音（系統 TTS) ---------- */
+  // 裝成 Android App 時，由 App 提供發音、存檔（window.AndroidApp)
+  const NATIVE = window.AndroidApp || null;
+  const hasTTS = () => !!NATIVE || 'speechSynthesis' in window;
   let voices = [];
   function loadVoices() {
+    if (NATIVE) { try { voices = JSON.parse(NATIVE.voices() || '[]'); } catch (err) { voices = []; } return; }
     try { voices = speechSynthesis.getVoices().filter((v) => /^en[-_]/i.test(v.lang)); } catch (err) { voices = []; }
   }
-  if ('speechSynthesis' in window) {
+  if (NATIVE) {
+    loadVoices();
+    window.__ttsReady = () => { loadVoices(); if (/settings/.test(location.hash)) render(); };
+  } else if ('speechSynthesis' in window) {
     loadVoices();
     speechSynthesis.addEventListener?.('voiceschanged', () => { loadVoices(); if (/settings/.test(location.hash)) render(); });
   }
@@ -199,6 +206,18 @@
   }
   let speakingBtn = null;
   function speak(text, rate, btn) {
+    if (NATIVE) {
+      if (speakingBtn) speakingBtn.classList.remove('speaking');
+      if (!voices.length) loadVoices();
+      const v = pickVoice();
+      speakingBtn = btn || null;
+      btn?.classList.add('speaking');
+      window.__ttsEnd = () => btn?.classList.remove('speaking');
+      let ok = false;
+      try { ok = NATIVE.speak(text, v ? v.lang : S.settings.accent, Number(rate || S.settings.rate) || 1, v ? v.name : ''); } catch (err) { ok = false; }
+      if (!ok) { btn?.classList.remove('speaking'); toast('找不到英文語音：請到手機的「設定 → 文字轉語音」安裝英文語音'); }
+      return;
+    }
     if (!('speechSynthesis' in window)) { toast('這個瀏覽器不支援系統語音，請改用 Chrome 或 Edge'); return; }
     const synth = speechSynthesis;
     if (speakingBtn) speakingBtn.classList.remove('speaking');
@@ -231,6 +250,7 @@
     document.documentElement.dataset.font = S.settings.fontSize;
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = dark ? '#121816' : '#f7f8f6';
+    try { NATIVE?.setDark(dark); } catch (err) { /* 舊版 App 沒有這個功能 */ }
   }
   darkMQ.addEventListener?.('change', applyTheme);
   function saveTheme() { try { localStorage.setItem('danciben-theme', S.settings.theme); } catch (err) { /* 無法儲存沒關係 */ } }
@@ -1242,6 +1262,7 @@
   }
 
   async function shareOrDownload(name, text) {
+    if (NATIVE) { try { return NATIVE.saveFile(name, text) || 'fail'; } catch (err) { return 'fail'; } }
     const blob = new Blob([text], { type: 'application/json' });
     // 在 claude.ai 預覽裡，下載要透過平台的 downloads 功能
     if (window.claude && window.claude.use) {
@@ -1461,7 +1482,7 @@
       html: `
       <section class="block panel"><h3>發音（系統語音）</h3>
         <label class="set-row"><span>語音</span><select id="set-voice" data-set="voice">${voices.length ? `<option value="">自動（${esc((pickVoice() || {}).name || '')})</option>` + voices.map((vc) => `<option value="${esc(vc.name)}" ${st.voice === vc.name ? 'selected' : ''}>${esc(vc.name)}(${esc(vc.lang)})</option>`).join('') : '<option value="">找不到英文語音</option>'}</select></label>
-        ${!('speechSynthesis' in window) ? '<p class="bad-txt small">這個瀏覽器不支援系統語音。</p>' : ''}
+        ${!hasTTS() ? '<p class="bad-txt small">這個瀏覽器不支援系統語音。</p>' : ''}
         <label class="set-row"><span>口音</span>${sel('set-accent', 'accent', [['en-US', '美式'], ['en-GB', '英式']])}</label>
         <label class="set-row"><span>語速 <span class="muted tnum" id="rate-v">${Number(st.rate).toFixed(1)}×</span></span><input id="set-rate" type="range" min="0.5" max="1.5" step="0.1" value="${st.rate}"></label>
         <label class="set-row"><span>查詢後自動唸出來</span><input id="set-auto" type="checkbox" class="switch" data-set="autoSpeak" ${st.autoSpeak ? 'checked' : ''}></label>
@@ -1624,6 +1645,7 @@
     'bk-export': async () => {
       const r = await shareOrDownload(`danciben-${today()}.json`, JSON.stringify(exportData()));
       if (r === 'download') toast('已存到「下載」資料夾');
+      else if (r === 'saved') toast('已存到「下載/單字本」，也可以從分享選單傳到電腦');
       else if (r === 'fail') toast('這裡無法下載檔案，請用安裝好的 App 匯出');
       else if (r === 'shared') toast('已分享');
     },
@@ -1705,7 +1727,15 @@
 
   init();
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:' || location.hostname === 'localhost') {
+  // 從其他 App 分享進來（App 已經開著的時候）
+  window.__shareIn = (text) => {
+    const t = String(text || '').trim();
+    if (!t) return;
+    S.shareText = t.replace(/https?:\/\/\S+/g, '').trim() || t;
+    if (location.hash === '#/share') render(); else location.hash = '#/share';
+  };
+
+  if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker?.register('sw.js').catch(() => { /* 預覽環境不支援，沒關係 */ });
   }
 })();

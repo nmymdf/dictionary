@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'tw.archiekuo.danciben'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'tw.archiekuo.danciben'
+        minSdk 29
+        targetSdk 34
+        versionCode (System.getenv('VERSION_CODE') ?: '1').toInteger()
+        versionName '1.0.' + (System.getenv('VERSION_CODE') ?: '1')
+    }
+
+    signingConfigs {
+        // 固定的簽章：之後更新 App 可以直接覆蓋安裝，資料不會不見
+        app {
+            storeFile file('danciben.keystore')
+            storePassword 'danciben'
+            keyAlias 'danciben'
+            keyPassword 'danciben'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.app
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

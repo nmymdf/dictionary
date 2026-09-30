@@ -1,0 +1,62 @@
+name: Android App
+
+on:
+  push:
+    branches: [claude/epic-shannon-lmuump, main]
+    paths:
+      - 'android/**'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Copy web app into the APK
+        run: |
+          mkdir -p android/app/src/main/assets/www
+          cp -r index.html manifest.webmanifest css js icons android/app/src/main/assets/www/
+
+      - name: Build APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Rename
+        run: cp android/app/build/outputs/apk/release/app-release.apk danciben.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: danciben-apk
+          path: danciben.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-${{ github.run_number }}
+          name: 單字本 App（第 ${{ github.run_number }} 版）
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            手機下載 `danciben.apk` → 開啟 → 允許安裝。
+            更新時直接安裝新版，資料會保留。
+          files: danciben.apk
