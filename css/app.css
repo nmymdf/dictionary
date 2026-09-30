@@ -9,6 +9,7 @@
   --accent-weak: #e2efeb;
   --star: #d08f00;
   --star-weak: #fff4d6;
+  --gold: #a87c00;        /* 作者署名 */
   --marker: #fcefa4;      /* 螢光筆:例句中的單字 */
   --ok: #2a7a3f;
   --ok-weak: #e4f3e7;
@@ -58,6 +59,7 @@
   --u-rare-bg: #2a2f35;
   --on-accent: #0c1a16;
   --shadow: rgb(0 0 0 / .35);
+  --gold: #e6b84a;
   color-scheme: dark;
 }
 :root[data-font="large"] { --fs-base: 1.125rem; }
@@ -574,5 +576,34 @@ label.btn { cursor: pointer; align-self: flex-start; }
 .danger-row .btn .ic { width: 1em; height: 1em; }
 
 /* 作者署名 */
-.author { margin: 0; text-align: center; font-style: italic; font-family: var(--font-word); color: var(--muted); font-size: .9rem; }
-.author-inline { font-style: italic; font-family: var(--font-word); }
+.author { margin: 0; text-align: center; font-style: italic; font-family: var(--font-word); color: var(--gold); font-weight: 600; font-size: 1rem; letter-spacing: .02em; }
+.author-inline { font-style: italic; font-family: var(--font-word); color: var(--gold); font-weight: 600; }
+
+/* 放大很多倍時（可用寬度很窄）：精簡排版 */
+.narrow .view { padding-inline: 10px; gap: 16px; }
+.narrow .tabbar a .ic { padding: 2px 6px; }
+.narrow .tabbar a span { white-space: nowrap; }
+.narrow .search-box { padding: 6px 6px 6px 12px; gap: 4px; }
+.narrow .search-actions .btn span { display: none; }
+.narrow .search-actions .btn { padding-inline: 12px; }
+.narrow .seg button { padding: 6px 16px; }
+.narrow .panel { padding-inline: 12px; }
+.narrow .set-row { flex-wrap: wrap; }
+.narrow .set-row select { max-width: 100%; }
+.narrow .stats:not(.three) { grid-template-columns: repeat(2, 1fr); }
+.narrow .lib-tools { position: static; }
+.narrow .lib-tools .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.narrow .lib-tools .chips > * { flex: none; }
+.narrow .rv-summary { grid-template-columns: 1fr; gap: 8px; }
+.narrow .rv-summary > div { flex-direction: row; align-items: baseline; justify-content: space-between; padding: 10px 14px; }
+.narrow .forecast { gap: 2px; padding: 8px; }
+.narrow .topbar h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.narrow .grade.four { grid-template-columns: 1fr 1fr; }
+.narrow .grade.four .btn { flex-direction: column; gap: 2px; min-height: 60px; white-space: nowrap; }
+.narrow .grade.four small { font-size: .8rem; }
+.narrow .flash { padding: 20px 14px; min-height: 240px; }
+.narrow .usage-row { flex-wrap: wrap; }
+.narrow .usage-row > .muted { white-space: nowrap; }
+.narrow .usage-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.narrow .senses li { gap: 6px; }
+.narrow .pos { min-width: 2em; }

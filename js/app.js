@@ -8,7 +8,7 @@
   const DEFAULT_SETTINGS = {
     accent: 'en-US', rate: 1, voice: '', autoSpeak: false,
     defaultMode: 'word', newPerDay: 20, perSession: 20, retention: 0.9,
-    fontSize: 'normal', theme: 'light', skipRare: false,
+    fontSize: 'normal', zoom: 2, theme: 'light', skipRare: false,
   };
   const S = {
     ready: false,
@@ -248,12 +248,21 @@
     const dark = t === 'dark' || (t === 'system' && darkMQ.matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     document.documentElement.dataset.font = S.settings.fontSize;
+    // 整個畫面一起放大（字、按鈕、圖示），不只放大字
+    document.documentElement.style.zoom = String(Number(S.settings.zoom) || 1);
+    markNarrow();
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = dark ? '#121816' : '#f7f8f6';
     try { NATIVE?.setDark(dark); } catch (err) { /* 舊版 App 沒有這個功能 */ }
   }
   darkMQ.addEventListener?.('change', applyTheme);
-  function saveTheme() { try { localStorage.setItem('danciben-theme', S.settings.theme); } catch (err) { /* 無法儲存沒關係 */ } }
+  // 放大後實際可用的寬度很窄時，改用更精簡的排版
+  function markNarrow() {
+    const w = window.innerWidth / (Number(S.settings.zoom) || 1);
+    document.documentElement.classList.toggle('narrow', w < 360);
+  }
+  window.addEventListener('resize', markNarrow);
+  function saveTheme() { try { localStorage.setItem('danciben-theme', S.settings.theme); localStorage.setItem('danciben-zoom', String(S.settings.zoom)); } catch (err) { /* 無法儲存沒關係 */ } }
 
   let toastTimer;
   function toast(msg) {
@@ -446,7 +455,7 @@
         </div>
         <form class="search-box ${isSent ? 'tall' : ''}" id="search-form">
           <textarea id="q" rows="${isSent ? 4 : 1}" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false" enterkeyhint="search"
-            placeholder="${isSent ? '貼上或輸入英文句子' : '輸入英文單字或片語'}">${esc(S.draft)}</textarea>
+            placeholder="${isSent ? '貼上英文句子' : '英文單字'}">${esc(S.draft)}</textarea>
           <div class="search-actions">
             <button type="button" class="icon-btn ghost" data-act="clear" aria-label="清除">${ic('x')}</button>
             <button type="submit" class="btn primary">${ic('search')}<span>${isSent ? '翻譯' : '查詢'}</span></button>
@@ -464,7 +473,8 @@
       <section class="block">
         <div class="block-head"><h3>最近查過</h3><a class="link" href="#/library" data-act="lib-recent">全部 ${ic('chev')}</a></div>
         ${recent.length ? `<ul class="list">${recent.map((r) => entryRow(r.e, { time: r.at, toResult: true })).join('')}</ul>` : '<p class="muted small">查過的字會自動記在這裡。</p>'}
-      </section>`,
+      </section>
+      <p class="author">作者：ArchieKUO</p>`,
       after() {
         const ta = document.getElementById('q');
         const hint = document.getElementById('auto-hint');
@@ -1499,7 +1509,7 @@
       </section>
       <section class="block panel"><h3>外觀</h3>
         <label class="set-row"><span>主題</span>${sel('set-theme', 'theme', [['light', '白底'], ['dark', '黑底'], ['system', '跟隨系統']])}</label>
-        <label class="set-row"><span>字級</span>${sel('set-font', 'fontSize', [['normal', '標準'], ['large', '大']])}</label>
+        <label class="set-row"><span>畫面大小</span>${sel('set-zoom', 'zoom', [[1, '標準'], [1.25, '大'], [1.5, '更大'], [1.75, '特大'], [2, '兩倍'], [2.25, '兩倍多']])}</label>
       </section>
       <section class="block panel"><h3>資料</h3>
         <div class="set-row"><span>已使用空間</span><span class="muted tnum" id="usage-v">計算中…</span></div>
@@ -1516,9 +1526,9 @@
         document.querySelectorAll('[data-set]').forEach((el) => el.addEventListener('change', () => {
           const k = el.dataset.set;
           let v = el.type === 'checkbox' ? el.checked : el.value;
-          if (['newPerDay', 'perSession', 'retention'].includes(k)) v = Number(v);
+          if (['newPerDay', 'perSession', 'retention', 'zoom'].includes(k)) v = Number(v);
           st[k] = v;
-          if (k === 'theme' || k === 'fontSize') { applyTheme(); saveTheme(); }
+          if (k === 'theme' || k === 'fontSize' || k === 'zoom') { applyTheme(); saveTheme(); }
           if (k === 'accent') st.voice = '';
           if (k === 'defaultMode') S.mode = v;
           saveSettings();
@@ -1687,7 +1697,10 @@
 
   /* ---------- 啟動 ---------- */
   async function init() {
-    try { const t = localStorage.getItem('danciben-theme'); if (t) S.settings.theme = t; } catch (err) { /* 忽略 */ }
+    try {
+      const t = localStorage.getItem('danciben-theme'); if (t) S.settings.theme = t;
+      const z = localStorage.getItem('danciben-zoom'); if (z) S.settings.zoom = Number(z);
+    } catch (err) { /* 忽略 */ }
     applyTheme();
     try {
       const [entries, groups, settings, history, log, daily] = await Promise.all([
