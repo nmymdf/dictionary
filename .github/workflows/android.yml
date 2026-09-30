@@ -37,9 +37,8 @@ jobs:
 
       - name: Build APK
         working-directory: android
-        env:
-          VERSION_CODE: ${{ github.run_number }}
-        run: gradle --no-daemon assembleRelease
+        # 版本號用時間（分鐘），新版一定比舊版大，可以直接覆蓋安裝
+        run: VERSION_CODE=$(( $(date +%s) / 60 )) gradle --no-daemon assembleRelease
 
       - name: Rename
         run: cp android/app/build/outputs/apk/release/app-release.apk danciben.apk
