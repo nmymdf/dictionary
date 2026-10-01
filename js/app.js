@@ -9,26 +9,29 @@
     accent: 'en-US', rate: 1, voice: '', autoSpeak: false,
     defaultMode: 'word', newPerDay: 20, perSession: 20, retention: 0.9,
     fontSize: 'normal', zoom: 2, theme: 'light', skipRare: false,
+    voiceMode: 'natural',  // natural：劍橋真人＋線上自然語音；system：系統語音
+    reviewScope: 'all',    // all / old（47 個檔）/ new（新查的）
   };
+  const RECENT_MAX = 20;
   const S = {
     ready: false,
     entries: [],
     index: new Map(),      // id → entry
     groups: {},
-    history: [],           // [{id, at}]
+    recent: [],            // 最近查過（最多 20 個）[{key, q, kind:'w'|'s'|'zh', zh, at}]
+    dict: {},              // 查詢結果 { key: {status:'loading'|'ok'|'error', data, msg} }
     log: {},               // 每天複習數 { 'YYYY-MM-DD': n }
     daily: { date: '', newDone: 0 },
     settings: { ...DEFAULT_SETTINGS },
     mode: 'word',
     draft: '',
-    lib: { filter: 'all', usage: 'all', tag: '', q: '', sort: 'recent', limit: 100 },
+    lib: { src: 'old', filter: 'all', usage: 'all', tag: '', q: '', sort: 'file', limit: 100 },
     reviewSetup: { range: 'all', mode: 'mix', tag: '', open: false },
     session: null,
     backup: { file: null, parsed: null, strategy: 'merge', result: null },
     imp: { step: 1, files: [], parsed: null, error: '' },
     shareText: null,
     zh: {},
-    pending: {},           // 線上查詢中/失敗 { id: 'loading' | 'error：訊息' }
     confirm: '',           // 需要再按一次確認的動作
   };
 
@@ -62,6 +65,9 @@
       notes: Array.isArray(e.notes) ? e.notes : [],
       usage: e.usage || null,
       group: e.group || null,
+      related: Array.isArray(e.related) ? e.related : [],
+      audio: e.audio || null,      // 劍橋真人發音 {us, uk}
+      camb: e.camb || null,        // 新查的字：當時查到的劍橋內容
       tags: Array.isArray(e.tags) ? e.tags : [],
       date: e.date || '',
       fixes: Array.isArray(e.fixes) ? e.fixes : [],
@@ -70,7 +76,7 @@
       last: e.last || null,
       added: e.added || Date.now(),
       order: e.order ?? 0,
-      src: e.src || 'lookup',
+      src: e.src === 'import' ? 'import' : 'new',
       edited: !!e.edited,
       review: { ...newReview(), ...(e.review || {}) },
     };
@@ -84,10 +90,27 @@
   }
   function saveEntry(e) { DB.put('entries', e).catch(dbFail); }
   function saveEntries(list) { return DB.putMany('entries', list).catch(dbFail); }
-  let histTimer;
-  function saveHistory() {
-    clearTimeout(histTimer);
-    histTimer = setTimeout(() => DB.setMeta('history', S.history.slice(0, 500)).catch(dbFail), 300);
+  // 最近查過 + 這些字查到的內容（重開 App 也能馬上打開）
+  let recentTimer;
+  function saveRecent() {
+    clearTimeout(recentTimer);
+    recentTimer = setTimeout(() => {
+      const cache = {};
+      S.recent.forEach((r) => { const d = S.dict[r.key]; if (d && d.status === 'ok') cache[r.key] = d.data; });
+      DB.setMeta('recent', S.recent).catch(dbFail);
+      DB.setMeta('dictCache', cache).catch(dbFail);
+    }, 300);
+  }
+  function addRecent(key, q, kind, zh) {
+    S.recent = S.recent.filter((r) => r.key !== key);
+    S.recent.unshift({ key, q, kind, zh: zh || '', at: Date.now() });
+    S.recent = S.recent.slice(0, RECENT_MAX);
+    saveRecent();
+  }
+  function removeEntry(e) {
+    S.entries = S.entries.filter((x) => x !== e);
+    S.index.delete(e.id);
+    DB.del('entries', e.id).catch(dbFail);
   }
   const saveSettings = () => DB.setMeta('settings', S.settings).catch(dbFail);
   const saveGroups = () => DB.putMany('groups', Object.values(S.groups)).catch(dbFail);
@@ -118,6 +141,8 @@
     play: '<path d="M8 5v14l11-7z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
     moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
     alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4.5M12 17.2v.3"/>',
   };
   const ic = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[name]}</svg>`;
@@ -206,7 +231,69 @@
       || voices[0] || null;
   }
   let speakingBtn = null;
-  function speak(text, rate, btn) {
+  /* 自然發音：單字用劍橋真人錄音，句子用線上自然語音；失敗就改用系統語音 */
+  let curAudio = null;
+  function playUrls(urls, rate) {
+    return new Promise((resolve, reject) => {
+      let i = 0;
+      const next = () => {
+        if (i >= urls.length) { resolve(); return; }
+        const a = new Audio(urls[i++]);
+        curAudio = a;
+        a.playbackRate = rate;
+        a.onended = next;
+        a.onerror = () => reject(new Error('audio'));
+        a.play().catch(reject);
+      };
+      next();
+    });
+  }
+  function ttsUrls(text) {
+    const tl = S.settings.accent === 'en-GB' ? 'en-GB' : 'en';
+    const parts = [];
+    let rest = normText(text);
+    while (rest.length > 180) {
+      let cut = Math.max(rest.lastIndexOf('. ', 180), rest.lastIndexOf(', ', 180), rest.lastIndexOf('; ', 180));
+      if (cut < 60) cut = rest.lastIndexOf(' ', 180);
+      if (cut < 1) cut = 180;
+      parts.push(rest.slice(0, cut + 1).trim());
+      rest = rest.slice(cut + 1).trim();
+    }
+    if (rest) parts.push(rest);
+    return parts.map((q) => `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(q)}`);
+  }
+  function cambAudio(text) {
+    const w = normText(text).toLowerCase();
+    if (!w || /\s/.test(w)) return '';
+    const key = wordKey(w);
+    const d = (S.dict[key] || {}).data;
+    const e = byId(key);
+    const pref = S.settings.accent === 'en-GB' ? ['uk', 'us'] : ['us', 'uk'];
+    for (const k of pref) {
+      if (d && d[k] && d[k].audio) return d[k].audio;
+      if (e && e.audio && e.audio[k]) return e.audio[k];
+      if (e && e.camb && e.camb[k] && e.camb[k].audio) return e.camb[k].audio;
+    }
+    return '';
+  }
+  function speak(text, rate, btn, url) {
+    if (!text) return;
+    if (S.settings.voiceMode === 'system' || navigator.onLine === false) { speakSystem(text, rate, btn); return; }
+    if (curAudio) { curAudio.pause(); curAudio = null; }
+    try { NATIVE?.stop(); } catch (err) { /* 沒關係 */ }
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    if (speakingBtn) speakingBtn.classList.remove('speaking');
+    speakingBtn = btn || null;
+    btn?.classList.add('speaking');
+    const r = rate || Number(S.settings.rate) || 1;
+    const camb = url || cambAudio(text);
+    const tts = ttsUrls(text);
+    playUrls(camb ? [camb] : tts, r)
+      .catch(() => (camb ? playUrls(tts, r) : Promise.reject()))
+      .catch(() => { btn?.classList.remove('speaking'); speakSystem(text, rate, btn); })
+      .then(() => btn?.classList.remove('speaking'));
+  }
+  function speakSystem(text, rate, btn) {
     if (NATIVE) {
       if (speakingBtn) speakingBtn.classList.remove('speaking');
       if (!voices.length) loadVoices();
@@ -276,6 +363,18 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.hidden = true; }, 2800);
   }
+  // 有「復原」按鈕的提示，停久一點
+  function toastAction(msg, label, fn) {
+    const el = document.getElementById('toast');
+    el.innerHTML = `<span>${esc(msg)}</span><button class="toast-btn" type="button">${esc(label)}</button>`;
+    el.hidden = false;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    el.querySelector('.toast-btn').addEventListener('click', () => { el.hidden = true; fn(); toast('已復原'); }, { once: true });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 7000);
+  }
 
   const go = (path) => { location.hash = '#/' + path; };
 
@@ -283,72 +382,147 @@
   const hasZh = (t) => /[\u3400-\u9fff]/.test(t);
   function looksLikeSentence(t) { if (hasZh(t)) return false; return normText(t).split(' ').length > 3 || /[.!?]$/.test(normText(t)); }
 
-  function recordQuery(e) {
-    e.count += 1;
-    e.last = Date.now();
-    S.history = S.history.filter((h) => h.id !== e.id);
-    S.history.unshift({ id: e.id, at: e.last });
-    saveHistory();
-    saveEntry(e);
-  }
+  /* ---------- 查詢 ---------- */
+  const wordKey = (w) => 'w:' + normText(w).toLowerCase();
+  const sentKey = (t) => 's:' + normText(t);
 
   function runQuery(raw, mode) {
     const text = normText(raw).replace(/^["“'(]+|["”')]+$/g, '');
     if (!text) { toast('先輸入要查的單字或句子'); return; }
-    // 打中文：中查英
-    if (hasZh(text)) { S.draft = ''; go('zh/' + encodeURIComponent(text)); return; }
-    mode = mode || S.mode;
-    const clean = mode === 'word' ? text.replace(/[.,!?;:]+$/, '') : text;
-    const id = makeId(mode, clean);
-    let e = byId(id);
     S.draft = '';
-    if (e) {
-      recordQuery(e);
-      if (S.settings.autoSpeak) speak(e.text);
-      go('result/' + encodeURIComponent(e.id));
-      return;
-    }
-    // 不在單字庫：先建立暫存卡，結果頁會去線上查
-    e = normEntry({ id, type: mode, text: mode === 'word' ? clean.toLowerCase() : clean, src: 'lookup' });
-    e.temp = true;
-    addEntry(e);
-    if (S.settings.autoSpeak) speak(e.text);
-    go('result/' + encodeURIComponent(e.id));
-    fetchOnline(e);
+    if (hasZh(text)) { go('zh/' + encodeURIComponent(text)); return; }
+    mode = mode || S.mode;
+    if (mode === 'sentence' || looksLikeSentence(text)) { go('s/' + encodeURIComponent(text)); return; }
+    go('w/' + encodeURIComponent(text.replace(/[.,!?;:]+$/, '').toLowerCase()));
   }
 
-  async function fetchOnline(e) {
-    S.pending[e.id] = 'loading';
-    render();
+  // 劍橋（App 版）；不能用劍橋的版本或劍橋查不到時，改用免費翻譯字典
+  function basicToDict(word, r) {
+    const byPos = {};
+    r.senses.forEach((x) => { (byPos[x.pos || ''] = byPos[x.pos || ''] || []).push({ zh: x.zh, def: '', level: '', labels: [], gw: '', examples: [] }); });
+    const entries = Object.entries(byPos).map(([pos, senses]) => ({ hw: word, pos: pos ? [pos] : [], gram: '', senses, phrases: [] }));
+    if (entries[0] && r.examples.length) entries[0].senses[0].examples = r.examples;
+    return { source: 'basic', word, uk: null, us: r.ipa ? { ipa: r.ipa, audio: '' } : null, infl: '', entries };
+  }
+  async function fetchWord(word) {
+    const key = wordKey(word);
+    S.dict[key] = { status: 'loading' };
+    let data = null, err = null, notFound = false;
+    if (window.Cambridge && Cambridge.canFetch()) {
+      try { data = await Cambridge.lookup(word); notFound = !data; } catch (e) { err = e; }
+    }
+    if (!data) {
+      try { data = basicToDict(word, await Lookup.word(word)); err = null; } catch (e) { err = err || e; }
+    }
+    if (data) {
+      S.dict[key] = { status: 'ok', data };
+      addRecent(key, word, 'w', dictZhShort(data));
+      const e = byId(key);
+      if (e && e.src === 'new' && !e.camb) { e.camb = data; saveEntry(e); }
+    } else {
+      S.dict[key] = {
+        status: 'error',
+        msg: navigator.onLine === false ? '沒有網路連線' : notFound ? `字典裡沒有「${word}」，請檢查拼字` : '字典沒有回應',
+      };
+    }
+    if (location.hash === '#/w/' + encodeURIComponent(word)) render();
+  }
+  async function fetchSentence(text) {
+    const key = sentKey(text);
+    S.dict[key] = { status: 'loading' };
     try {
-      if (e.type === 'word') {
-        const r = await Lookup.word(e.text);
-        e.ipa = e.ipa || r.ipa;
-        e.senses = r.senses;
-        e.examples = r.examples;
-      } else {
-        e.zh = await Lookup.sentence(e.text);
-      }
-      delete S.pending[e.id];
-      delete e.temp;
-      recordQuery(e);
+      const zh = await Lookup.sentence(text);
+      S.dict[key] = { status: 'ok', data: { zh } };
+      addRecent(key, text, 's', zh);
     } catch (err) {
-      S.pending[e.id] = 'error:' + (navigator.onLine === false ? '沒有網路連線' : '查詢服務沒有回應');
+      S.dict[key] = { status: 'error', msg: navigator.onLine === false ? '沒有網路連線' : '翻譯服務沒有回應' };
     }
-    if (location.hash.includes(encodeURIComponent(e.id))) render();
+    if (location.hash === '#/s/' + encodeURIComponent(text)) render();
   }
 
+  const POS_ZH = { noun: 'n.', verb: 'v.', adjective: 'adj.', adverb: 'adv.', preposition: 'prep.', conjunction: 'conj.', pronoun: 'pron.', exclamation: 'int.', determiner: 'det.', 'phrasal verb': 'phr. v.', idiom: 'idiom', 'modal verb': 'modal v.', 'auxiliary verb': 'aux. v.', number: 'num.', prefix: 'prefix', suffix: 'suffix' };
+  const POS_NAME = { noun: '名詞', verb: '動詞', adjective: '形容詞', adverb: '副詞', preposition: '介系詞', conjunction: '連接詞', pronoun: '代名詞', exclamation: '感嘆詞', determiner: '限定詞', 'phrasal verb': '片語動詞', idiom: '慣用語', 'modal verb': '情態動詞', 'auxiliary verb': '助動詞', number: '數詞' };
+  const posAbbr = (p) => POS_ZH[p] || p || '';
+  // 每個詞性取前幾個中文意思，當作「一眼看懂」
+  function dictSummary(d) {
+    const out = [];
+    d.entries.forEach((en) => {
+      const zh = [];
+      en.senses.forEach((x) => x.zh.split(/[；;]/).forEach((t) => { t = t.trim(); if (t && !zh.includes(t) && zh.length < 4) zh.push(t); }));
+      const pos = posAbbr(en.pos[0]);
+      const same = out.find((o) => o.pos === pos);
+      if (same) zh.forEach((t) => { if (!same.zh.includes(t) && same.zh.length < 4) same.zh.push(t); });
+      else if (zh.length) out.push({ pos, zh });
+    });
+    return out.slice(0, 4);
+  }
+  const dictZhShort = (d) => dictSummary(d).map((x) => x.zh.join('；')).join('｜');
+
+  // 加入複習：47 個檔的字直接標星號；新字另外存成「新查的」
+  function addToReview(key) {
+    let e = entryFor(key);
+    if (e) {
+      e.starred = true;
+      if (!e.review.reps) { e.review.status = 'new'; e.review.due = Date.now(); }
+      saveEntry(e);
+    } else if (key.startsWith('w:')) {
+      const d = (S.dict[key] || {}).data;
+      if (!d) { toast('還沒查到內容，等一下再加'); return; }
+      const word = key.slice(2);
+      const exs = [];
+      d.entries.forEach((en) => en.senses.forEach((x) => x.examples.forEach((ex) => { if (ex.zh) exs.push(ex); })));
+      exs.sort((a, b) => a.en.length - b.en.length);
+      const pick = (d.us && d.us.audio) || (d.uk && d.uk.audio) ? { us: d.us && d.us.audio, uk: d.uk && d.uk.audio } : null;
+      e = normEntry({
+        id: key, type: 'word', text: word, src: 'new', starred: true,
+        ipa: /\s/.test(word) ? '' : ((d.us || d.uk || {}).ipa || ''),
+        senses: dictSummary(d).map((x) => ({ pos: x.pos, zh: x.zh.join('；') })),
+        examples: exs.filter((x) => hasWord(x.en, word)).slice(0, 5),
+        forms: d.infl ? { infl: d.infl, fam: [] } : null,
+        audio: /\s/.test(word) ? null : pick, camb: d, added: Date.now(),
+      });
+      e.review.status = 'new'; e.review.due = Date.now();
+      addEntry(e); saveEntry(e);
+    } else {
+      const d = (S.dict[key] || {}).data;
+      const text = key.slice(2);
+      if (!d) { toast('還沒翻譯好，等一下再加'); return; }
+      e = normEntry({ type: 'sentence', text, zh: d.zh, src: 'new', starred: true, added: Date.now() });
+      e.review.status = 'new'; e.review.due = Date.now();
+      addEntry(e); saveEntry(e);
+    }
+    toast('已加入複習');
+    render();
+  }
+  // 取消複習：新查的整筆刪掉（可以復原）；47 個檔的字只是拿掉星號
+  function removeFromReview(e) {
+    if (e.src === 'new') {
+      removeEntry(e);
+      toastAction(`已刪除「${e.type === 'word' ? e.text : '這個句子'}」`, '復原', () => { addEntry(e); saveEntry(e); render(); });
+    } else {
+      const before = { ...e.review };
+      e.starred = false; saveEntry(e);
+      toastAction('已移出複習', '復原', () => { e.starred = true; e.review = before; saveEntry(e); render(); });
+    }
+    render();
+  }
   function toggleStar(id) {
     const e = byId(id);
-    e.starred = !e.starred;
-    if (e.starred) {
-      if (!e.review.reps) { e.review.status = 'new'; e.review.due = Date.now(); }
-      toast(`已把「${e.type === 'word' ? e.text : '這個句子'}」加入複習`);
-    } else {
-      toast('已從複習移除（複習紀錄會保留）');
+    if (!e) return;
+    if (e.starred) removeFromReview(e); else addToReview(id);
+  }
+  // 找到單字庫裡對應的那一筆（句子用 makeId 比對）
+  const entryFor = (key) => (key.startsWith('w:') ? byId(key) : byId(makeId('sentence', key.slice(2))));
+
+  /* ---------- 標籤：47 個檔 / 新查的 ---------- */
+  function srcTag(e) {
+    if (!e) return '';
+    if (e.src === 'new') {
+      const d = new Date(e.added);
+      return `<span class="src-tag new">新查・${d.getMonth() + 1}/${d.getDate()}</span>`;
     }
-    saveEntry(e);
-    render();
+    const t = e.tags[0] || '單字簿';
+    return `<span class="src-tag old">${esc(t)}${e.tags.length > 1 ? ` +${e.tags.length - 1}` : ''}</span>`;
   }
 
   /* ---------- 共用區塊 ---------- */
@@ -385,26 +559,11 @@
     if (!e.fixes.length) return '';
     return `<section class="block"><h3>更正紀錄</h3><ul class="fixes">${e.fixes.map((x) => `<li><span class="fix-note">${esc(x)}</span></li>`).join('')}</ul></section>`;
   }
-  function confusablesBlock(e, detailed) {
-    const g = e.group && S.groups[e.group];
-    if (!g) return '';
-    const members = g.members.map(byId).filter(Boolean);
-    const others = members.filter((m) => m.id !== e.id);
-    if (!others.length) return '';
-    if (detailed) {
-      return `<section class="block"><h3>同組易混淆</h3>
-        ${g.note ? `<p class="note">${esc(g.note)}</p>` : ''}
-        <div class="cmp">${members.map((m) => `
-          <a class="cmp-row ${m.id === e.id ? 'self' : ''}" href="#/entry/${encodeURIComponent(m.id)}">
-            <span class="hw-sm" lang="en">${esc(m.text)}</span>
-            <span class="cmp-pos">${[...new Set(m.senses.map((s) => s.pos))].join(' ')}</span>
-            <span class="cmp-zh">${esc(zhShort(m))}</span>
-            ${m.starred ? ic('star', 'mini-star') : '<span></span>'}
-          </a>`).join('')}</div></section>`;
-    }
-    return `<section class="block"><h3>同組易混淆</h3>
-      <div class="chips">${others.map((o) => `<button class="chip-link" data-act="query" data-text="${esc(o.text)}" data-mode="word"><b lang="en">${esc(o.text)}</b> ${esc((o.senses[0] || {}).zh || '')}</button>`).join('')}</div>
-      ${g.note ? `<p class="note">${esc(g.note)}</p>` : ''}</section>`;
+  // 筆記裡跟這個字有關的說明（易混淆、相關字）
+  function relatedBlock(e) {
+    const lines = [...e.related];
+    if (!lines.length) return '';
+    return `<div class="related"><span class="related-l">${ic('alert')} 相關說明</span><ul>${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul></div>`;
   }
   function sentenceTokens(text) {
     return esc(text).split(/([A-Za-z][A-Za-z'’-]*)/).map((part) => {
@@ -417,16 +576,18 @@
   }
   const tagChips = (e) => e.tags.map((t) => `<a class="tag" href="#/library" data-act="lib-tag" data-t="${esc(t)}">#${esc(t)}</a>`).join('');
 
+  const pageHref = (type, text) => `#/${type === 'sentence' || type === 's' ? 's' : 'w'}/${encodeURIComponent(type === 'sentence' || type === 's' ? text : text.toLowerCase())}`;
   function entryRow(e, opts = {}) {
     return `<li class="row">
-      <a class="row-main" href="#/${opts.toResult ? 'result' : 'entry'}/${encodeURIComponent(e.id)}">
+      <a class="row-main" href="${pageHref(e.type, e.text)}">
         <span class="row-title ${e.type === 'sentence' ? 'is-sent' : ''}" ${e.type === 'word' ? 'lang="en"' : ''}>${esc(e.text)}</span>
-        <span class="row-sub">${e.type === 'sentence' ? '<span class="tag-s">句子</span>' : ''}${usageChip(e.usage)}${esc(zhShort(e))}</span>
+        <span class="row-sub">${opts.noTag ? '' : srcTag(e)}${usageChip(e.usage)}${esc(zhShort(e))}</span>
       </a>
       <div class="row-meta">
         ${speakBtn(e.text, '播放發音', 'row-speak')}
-        ${opts.time ? `<span class="muted small">${rel(opts.time)}</span>` : ''}
-        <button class="star-mini ${e.starred ? 'on' : ''}" data-act="star" data-id="${esc(e.id)}" aria-label="${e.starred ? '移出複習' : '加入複習'}">${ic('star')}</button>
+        ${opts.del
+    ? `<button class="icon-btn ghost row-del" data-act="del-new" data-id="${esc(e.id)}" aria-label="刪除">${ic('trash')}</button>`
+    : `<button class="star-mini ${e.starred ? 'on' : ''}" data-act="star" data-id="${esc(e.id)}" aria-label="${e.starred ? '移出複習' : '加入複習'}">${ic('star')}</button>`}
       </div></li>`;
   }
 
@@ -467,12 +628,21 @@
     return list.map((e) => `<li><a href="#/result/${encodeURIComponent(e.id)}" data-act="open-sugg" data-id="${esc(e.id)}"><b lang="en">${esc(e.text)}</b><span>${esc(zhShort(e))}</span></a></li>`).join('');
   }
 
+  function recentRow(r) {
+    const e = r.kind === 'zh' ? null : entryFor(r.key);
+    const href = r.kind === 'zh' ? '#/zh/' + encodeURIComponent(r.q) : pageHref(r.kind, r.q);
+    return `<li class="row">
+      <a class="row-main" href="${href}">
+        <span class="row-title ${r.kind !== 'w' ? 'is-sent' : ''}" ${r.kind !== 'zh' ? 'lang="en"' : ''}>${esc(r.q)}</span>
+        <span class="row-sub">${e && e.starred ? '<span class="in-rv">複習中</span>' : ''}${esc(r.zh)}</span>
+      </a>
+      <div class="row-meta"><span class="muted small">${rel(r.at)}</span></div></li>`;
+  }
   function heroDate() {
     const d = new Date();
     return `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${'日一二三四五六'[d.getDay()]}`;
   }
   function viewSearch() {
-    const recent = S.history.slice(0, 10).map((h) => ({ e: byId(h.id), at: h.at })).filter((x) => x.e && !x.e.temp);
     const isSent = S.mode === 'sentence';
     const empty = !S.entries.some((e) => e.src === 'import');
     return {
@@ -506,8 +676,8 @@
         <a class="btn primary" href="#/backup">去匯入</a>
       </section>` : ''}
       <section class="block">
-        <div class="block-head"><h3>最近查過</h3><a class="link" href="#/library" data-act="lib-recent">全部 ${ic('chev')}</a></div>
-        ${recent.length ? `<ul class="list">${recent.map((r) => entryRow(r.e, { time: r.at, toResult: true })).join('')}</ul>` : '<p class="muted small">查過的字會自動記在這裡。</p>'}
+        <div class="block-head"><h3>最近查過</h3>${S.recent.length ? '<button class="link small" data-act="clear-recent">清除</button>' : ''}</div>
+        ${S.recent.length ? `<ul class="list recent">${S.recent.map(recentRow).join('')}</ul>` : '<p class="muted small empty-hint">最近查過的 20 個字和句子會列在這裡，方便你再打開。<br>想留下來複習，在查詢結果按「加入複習」。</p>'}
       </section>
       <p class="author">作者：ArchieKUO</p>`,
       after() {
@@ -568,84 +738,162 @@
       title: '中查英', tab: 'search', back: '#/search',
       html: `
       <h2 class="zh-q">${esc(q)}</h2>
-      ${words.length ? `<section class="block"><h3>你的單字簿裡</h3><ul class="list">${words.map((e) => entryRow(e, { toResult: true })).join('')}</ul></section>` : ''}
+      ${words.length ? `<section class="block"><h3>你的單字簿裡</h3><ul class="list">${words.map((e) => entryRow(e)).join('')}</ul></section>` : ''}
       ${online}
-      ${mine.inExamples.length ? `<section class="block"><h3>例句裡有「${esc(q)}」的字</h3><ul class="list">${mine.inExamples.map((e) => entryRow(e, { toResult: true })).join('')}</ul></section>` : ''}
-      ${sents.length ? `<section class="block"><h3>你的句子裡</h3><ul class="list">${sents.map((e) => entryRow(e, { toResult: true })).join('')}</ul></section>` : ''}`,
+      ${mine.inExamples.length ? `<section class="block"><h3>例句裡有「${esc(q)}」的字</h3><ul class="list">${mine.inExamples.map((e) => entryRow(e)).join('')}</ul></section>` : ''}
+      ${sents.length ? `<section class="block"><h3>你的句子裡</h3><ul class="list">${sents.map((e) => entryRow(e)).join('')}</ul></section>` : ''}`,
     };
   }
 
-  /* ---------- 畫面：查詢結果 ---------- */
-  function pendingBlock(e) {
-    const p = S.pending[e.id];
-    if (p === 'loading') return '<div class="loading"><span class="spinner"></span>正在查詢字典…</div>';
-    if (p && p.startsWith('error:')) {
-      return `<div class="error-box">${ic('alert')}<div><b>查不到：${esc(p.slice(6))}</b><br><span class="small">確認有連上網路後再試一次。</span></div>
-        <button class="btn small" data-act="retry" data-id="${esc(e.id)}">重試</button></div>`;
-    }
-    return '';
+  /* ---------- 畫面：單字 ---------- */
+  const errBox = (msg, act, data) => (/拼字/.test(msg)
+    ? `<div class="error-box">${ic('alert')}<div><b>${esc(msg)}</b></div></div>`
+    : `<div class="error-box">${ic('alert')}<div><b>查不到：${esc(msg)}</b><br><span class="small">確認有連上網路後再試一次。</span></div>
+    <button class="btn small" data-act="${act}" ${data}>重試</button></div>`);
+  const loadingBox = (t) => `<div class="loading dict-loading"><span class="spinner"></span>${t}</div>`;
+
+  function reviewBtn(key, e) {
+    const on = e && e.starred;
+    return `<div class="rv-row">
+      <button class="rv-btn ${on ? 'on' : ''}" data-act="rv-toggle" data-key="${esc(key)}" aria-pressed="${!!on}">${ic(on ? 'check' : 'plus')}<span>${on ? '已加入複習' : '加入複習'}</span></button>
+      <span class="rv-hint">${on ? (e.src === 'new' ? '再按一次會刪除這個字（可以復原）' : '再按一次移出複習') : '按了才會存下來、排進複習'}</span>
+    </div>`;
   }
 
-  function maybeFetchIpa(e) {
-    if (e.type !== 'word' || e.ipa || e.ipaTried || e.temp || /\s/.test(e.text)) return;
-    e.ipaTried = true;
-    Lookup.ipa(e.text).then((ipa) => {
-      if (ipa) { e.ipa = ipa; saveEntry(e); if (location.hash.includes(encodeURIComponent(e.id))) render(); }
-    }).catch(() => {});
+  function pronBtns(word, d, e) {
+    if (/\s/.test(word)) return `<div class="pron-row"><button class="pron" data-act="speak" data-text="${esc(word)}">${ic('speaker')}<span>唸出來</span></button></div>`;
+    const us = (d && d.us) || (e && e.audio && { audio: e.audio.us, ipa: e.ipa });
+    const uk = (d && d.uk) || (e && e.audio && { audio: e.audio.uk, ipa: '' });
+    const one = (r, label, p) => `<button class="pron" data-act="speak" data-text="${esc(word)}" data-url="${esc((p && p.audio) || '')}">
+      <span class="pron-r">${label}</span>${p && p.ipa ? `<span class="ipa" lang="en">${esc(p.ipa)}</span>` : ''}${ic('speaker')}</button>`;
+    if (!us && !uk) return `<div class="pron-row">${one('us', '發音', e && e.ipa ? { ipa: e.ipa } : null)}</div>`;
+    return `<div class="pron-row">${us ? one('us', '美', us) : ''}${uk ? one('uk', '英', uk) : ''}</div>`;
   }
 
-  function wordHeader(e, detail) {
-    return `<header class="hw">
-        <div class="hw-line">
-          <h2 class="headword" lang="en">${esc(e.text)}</h2>
-          ${speakBtn(e.text)}
-        </div>
-        <div class="ipa-line">${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${detail ? '' : usageChip(e.usage)}</div>
-        ${detail ? `<div class="usage-row"><span class="muted small">用法</span>${usagePicker(e)}</div>` : ''}
-        ${e.temp ? '' : starBtn(e, true)}
-      </header>`;
+  function minLevel(d) {
+    const L = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+    let best = 9;
+    d.entries.forEach((en) => en.senses.forEach((x) => { const i = L.indexOf(x.level); if (i >= 0 && i < best) best = i; }));
+    return best < 9 ? L[best] : '';
+  }
+  const LEVEL_TIP = { A1: '入門', A2: '基礎', B1: '中級', B2: '中高級', C1: '高級', C2: '精通' };
+
+  function exampleHtml(x, word) {
+    return `<div class="ex"><p class="ex-en" lang="en">${highlight(x.en, word)} ${speakBtn(x.en, '播放例句', 'ex-speak')}</p>${x.zh ? `<p class="ex-zh">${esc(x.zh)}</p>` : ''}</div>`;
   }
 
-  function viewResult(id) {
-    const e = byId(id);
-    if (!e) return viewMissing();
-    if (e.type === 'sentence') return viewSentenceResult(e);
-    maybeFetchIpa(e);
-    const pend = pendingBlock(e);
-    const src = e.src === 'import' ? `你的單字簿 ${tagChips(e)}` : '線上字典';
+  function senseHtml(x, i, word) {
+    const exs = x.examples;
+    return `<li class="def">
+      <div class="def-main"><span class="def-n">${i + 1}</span>
+        <div class="def-text">
+          <p class="def-zh">${esc(x.zh || x.def)}${x.level ? ` <span class="lvl lvl-${x.level[0]}" title="${LEVEL_TIP[x.level] || ''}">${x.level}</span>` : ''}${x.gw ? ` <span class="gw" lang="en">${esc(x.gw.toLowerCase())}</span>` : ''}</p>
+          ${x.def && x.zh ? `<p class="def-en" lang="en">${esc(x.def)}</p>` : ''}
+          ${x.labels && x.labels.length ? `<p class="def-labels">${x.labels.map((l) => `<span lang="en">${esc(l)}</span>`).join('')}</p>` : ''}
+        </div></div>
+      ${exs.length ? exampleHtml(exs[0], word) : ''}
+      ${exs.length > 1 ? `<details class="more-ex"><summary>再看 ${exs.length - 1} 個例句</summary>${exs.slice(1).map((ex) => exampleHtml(ex, word)).join('')}</details>` : ''}
+    </li>`;
+  }
+
+  function dictHtml(d, word) {
+    const SHOW = 3;
+    const blocks = d.entries.map((en) => {
+      const posEn = en.pos[0] || '';
+      const head = `<header class="pos-h"><span class="pos-name">${esc(POS_NAME[posEn] || posEn || '詞義')}</span>${posEn && POS_NAME[posEn] ? `<span class="pos-en" lang="en">${esc(posEn)}</span>` : ''}
+        ${en.hw && en.hw.toLowerCase() !== word.toLowerCase() ? `<b class="pos-hw" lang="en">${esc(en.hw)}</b>` : ''}</header>`;
+      const first = en.senses.slice(0, SHOW).map((x, i) => senseHtml(x, i, word)).join('');
+      const rest = en.senses.slice(SHOW);
+      return `<article class="pos-block">${head}
+        <ol class="defs">${first}</ol>
+        ${rest.length ? `<details class="more-defs"><summary>其他 ${rest.length} 個意思</summary><ol class="defs" start="${SHOW + 1}">${rest.map((x, i) => senseHtml(x, i + SHOW, word)).join('')}</ol></details>` : ''}
+        ${en.phrases.length ? `<details class="phrases"><summary>片語 ${en.phrases.length} 個</summary><ul>${en.phrases.map((ph) => `<li><b lang="en">${esc(ph.phrase)}</b><span>${esc(ph.zh || ph.def)}</span>${ph.examples[0] ? exampleHtml(ph.examples[0], ph.phrase) : ''}</li>`).join('')}</ul></details>` : ''}
+      </article>`;
+    }).join('');
+    return `<section class="dict">
+      <div class="dict-head"><h3>${d.source === 'cambridge' ? '劍橋英漢字典' : '線上字典'}</h3>
+        ${d.source === 'cambridge' ? `<a class="link small" href="${esc(d.url || Cambridge.DICT + encodeURIComponent(word))}" target="_blank" rel="noopener">在劍橋網站開啟 ${ic('chev')}</a>` : '<span class="muted small">（這個版本不能連劍橋字典）</span>'}</div>
+      ${d.infl ? `<p class="infl-line"><span class="infl-l">變化</span><span lang="en">${esc(d.infl)}</span></p>` : ''}
+      ${blocks}
+    </section>`;
+  }
+
+  function noteCard(e) {
+    const exs = e.examples.slice(0, 3);
+    return `<section class="note-card">
+      <div class="note-head"><h3>${ic('book')} 我的筆記</h3>${srcTag(e)}${usageChip(e.usage)}</div>
+      ${sensesBlock(e)}
+      ${e.forms ? `<div class="note-forms">${e.forms.infl ? `<p class="infl" lang="en">${esc(e.forms.infl)}</p>` : ''}${e.forms.fam && e.forms.fam.length ? `<div class="chips">${e.forms.fam.map((x) => `<button class="chip-link" data-act="query" data-text="${esc(x.w)}" data-mode="word"><b lang="en">${esc(x.w)}</b> <span class="pos">${esc(x.pos)}</span> ${esc(x.zh)}</button>`).join('')}</div>` : ''}</div>` : ''}
+      ${exs.length ? `<div class="note-ex">${exs.map((x) => exampleHtml(x, e.text)).join('')}</div>` : ''}
+      ${relatedBlock(e)}
+      ${e.notes.length ? `<ul class="notes">${e.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+      <a class="link small" href="#/entry/${encodeURIComponent(e.id)}">編輯筆記・複習紀錄 ${ic('chev')}</a>
+    </section>`;
+  }
+
+  function viewWord(word) {
+    word = normText(word).toLowerCase();
+    const key = wordKey(word);
+    const e = byId(key);
+    if (!S.dict[key]) fetchWord(word);
+    const st = S.dict[key];
+    const d = st.status === 'ok' ? st.data : (e && e.camb) || null;
+    if (e && st.status !== 'loading') addRecentQuiet(key, word, 'w', e, d);
+    const gist = d ? dictSummary(d) : (e ? e.senses.slice(0, 4).map((x) => ({ pos: x.pos, zh: [x.zh] })) : []);
+    const lvl = d ? minLevel(d) : '';
+    let dict = '';
+    if (d) dict = dictHtml(d, word);
+    else if (st.status === 'loading') dict = loadingBox('正在查劍橋字典…');
+    else dict = errBox(st.msg, 'w-retry', `data-q="${esc(word)}"`);
     return {
-      title: '查詢結果', tab: 'search', back: '#/search',
+      title: '單字', tab: 'search', back: '#/search',
       html: `
-      ${e.temp || !e.count ? '' : `<div class="logged">${ic('clock')} 已記錄到查詢紀錄 · 第 ${e.count} 次查這個字</div>`}
-      ${wordHeader(e, false)}
-      ${pend || `
-      <section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
-      ${formsBlock(e)}
-      <section class="block"><h3>例句</h3>${examplesBlock(e)}</section>
-      ${notesBlock(e)}
-      ${confusablesBlock(e, false)}
-      <div class="foot-links">
-        <a class="link" href="#/entry/${encodeURIComponent(e.id)}">詳情與編輯 ${ic('chev')}</a>
-        <span class="muted small">來源：${src}</span>
-      </div>`}`,
+      <header class="wd-head">
+        <div class="wd-tags">${srcTag(e)}${lvl ? `<span class="lvl lvl-${lvl[0]}" title="${LEVEL_TIP[lvl]}">${lvl} ${LEVEL_TIP[lvl]}</span>` : ''}${e ? usageChip(e.usage) : ''}</div>
+        <h2 class="headword" lang="en">${esc(word)}</h2>
+        ${pronBtns(word, d, e)}
+        ${gist.length ? `<ul class="gist">${gist.map((g) => `<li><span class="pos">${esc(g.pos)}</span><span>${esc(g.zh.join('；'))}</span></li>`).join('')}</ul>` : ''}
+        ${d || e ? reviewBtn(key, e) : ''}
+      </header>
+      ${e && e.src === 'import' ? noteCard(e) : ''}
+      ${dict}`,
     };
   }
+  // 從單字簿打開（沒有上網）也算查過
+  function addRecentQuiet(key, q, kind, e, d) {
+    if (S.recent[0] && S.recent[0].key === key) return;
+    addRecent(key, q, kind, d ? dictZhShort(d) : zhShort(e));
+  }
 
-  function viewSentenceResult(e) {
-    const pend = pendingBlock(e);
+  /* ---------- 畫面：句子 ---------- */
+  function viewSent(text) {
+    text = normText(text);
+    const key = sentKey(text);
+    const e = entryFor(key);
+    let zh = e ? e.zh : '';
+    let box = '';
+    if (!zh) {
+      if (!S.dict[key]) fetchSentence(text);
+      const st = S.dict[key];
+      if (st.status === 'ok') zh = st.data.zh;
+      else if (st.status === 'loading') box = loadingBox('正在翻譯…');
+      else box = errBox(st.msg, 's-retry', `data-q="${esc(text)}"`);
+    } else addRecentQuiet(key, text, 's', e, null);
     return {
-      title: '句子翻譯', tab: 'search', back: '#/search',
+      title: '句子', tab: 'search', back: '#/search',
       html: `
-      ${e.temp || !e.count ? '' : `<div class="logged">${ic('clock')} 已記錄到查詢紀錄 · 第 ${e.count} 次</div>`}
       <section class="sent-card">
-        <div class="sent-en" lang="en">${sentenceTokens(e.text)}</div>
-        <p class="tap-hint">點句子裡的任何一個字就能直接查；有底線的字已在你的單字庫。</p>
-        <div class="sent-actions">${speakBtn(e.text, '唸整句')}<button class="btn small ghost" data-act="speak" data-text="${esc(e.text)}" data-rate="0.7">慢速</button></div>
+        <div class="wd-tags">${srcTag(e)}</div>
+        <div class="sent-en" lang="en">${sentenceTokens(text)}</div>
+        <div class="sent-actions">
+          <button class="pron" data-act="speak" data-text="${esc(text)}">${ic('speaker')}<span>唸整句</span></button>
+          <button class="pron" data-act="speak" data-text="${esc(text)}" data-rate="0.75">${ic('speaker')}<span>慢一點</span></button>
+        </div>
+        <p class="tap-hint">點句子裡的任何一個字，可以查那個字</p>
       </section>
-      ${pend || `<section class="block"><h3>中文翻譯</h3><p class="sent-zh">${esc(e.zh)}</p></section>
-      ${e.date || e.tags.length ? `<p class="muted small">${e.date ? esc(e.date) + ' · ' : ''}${tagChips(e)}</p>` : ''}
-      <div class="center-row">${starBtn(e, true)}</div>
-      <div class="foot-links"><a class="link" href="#/entry/${encodeURIComponent(e.id)}">詳情與編輯 ${ic('chev')}</a><span class="muted small">來源：${e.src === 'import' ? '你的筆記' : '線上翻譯'}</span></div>`}`,
+      ${zh ? `<section class="block"><h3>中文翻譯</h3><p class="sent-zh">${esc(zh)}</p></section>` : box}
+      ${zh ? reviewBtn(key, e) : ''}
+      ${e && e.src === 'import' && (e.date || e.tags.length) ? `<p class="muted small">筆記：${e.date ? esc(e.date) + ' · ' : ''}${tagChips(e)}</p>` : ''}`,
     };
   }
 
@@ -689,7 +937,10 @@
 
   function viewLibrary() {
     const L = S.lib;
-    const real = S.entries.filter((e) => !e.temp);
+    const isNewTab = L.src === 'new';
+    const nOld = S.entries.filter((e) => e.src === 'import').length;
+    const nNew = S.entries.length - nOld;
+    const real = S.entries.filter((e) => (e.src === 'new') === isNewTab);
     const counts = {
       all: real.length,
       star: real.filter((e) => e.starred).length,
@@ -697,48 +948,54 @@
       sentence: real.filter((e) => e.type === 'sentence').length,
     };
     let list = real.filter((e) => (L.filter === 'all') || (L.filter === 'star' && e.starred) || (L.filter === e.type));
-    if (L.usage !== 'all') list = list.filter((e) => e.usage === L.usage);
-    if (L.tag) list = list.filter((e) => e.tags.includes(L.tag));
+    if (L.usage !== 'all' && !isNewTab) list = list.filter((e) => e.usage === L.usage);
+    if (L.tag && !isNewTab) list = list.filter((e) => e.tags.includes(L.tag));
     if (L.q) {
       const q = L.q.toLowerCase().trim();
       list = list.filter((e) => e.text.toLowerCase().includes(q) || zhShort(e).includes(L.q.trim()));
     }
     const sorters = {
-      recent: (a, b) => (b.last || 0) - (a.last || 0) || a.order - b.order,
-      count: (a, b) => b.count - a.count,
+      recent: (a, b) => (b.added || 0) - (a.added || 0),
       az: (a, b) => a.text.localeCompare(b.text),
       file: (a, b) => a.order - b.order,
       wrong: (a, b) => (b.review.lapses || 0) - (a.review.lapses || 0) || (b.review.wrong || 0) - (a.review.wrong || 0),
     };
-    list.sort(sorters[L.sort] || sorters.recent);
+    const sortKey = isNewTab && L.sort === 'file' ? 'recent' : (!isNewTab && L.sort === 'recent' ? 'file' : L.sort);
+    list.sort(sorters[sortKey] || sorters.file);
     const total = list.length;
     const shown = list.slice(0, L.limit);
     const f = (key, label) => `<button class="fchip ${L.filter === key ? 'on' : ''}" data-act="lib-filter" data-f="${key}">${label}<span class="tnum">${counts[key]}</span></button>`;
     return {
       title: '單字庫', tab: 'library',
       html: `
+      <div class="src-tabs" role="tablist">
+        <button role="tab" class="${!isNewTab ? 'on' : ''}" data-act="lib-src" data-s="old" aria-selected="${!isNewTab}"><span>我的單字簿</span><small class="tnum">47 個檔 · ${nOld}</small></button>
+        <button role="tab" class="${isNewTab ? 'on new' : ''}" data-act="lib-src" data-s="new" aria-selected="${isNewTab}"><span>新查的</span><small class="tnum">${nNew}</small></button>
+      </div>
+      ${isNewTab && !nNew ? `<div class="empty-card">${ic('plus')}<p>還沒有新查的字</p><p class="muted small">查字典時按「加入複習」，那個字或句子就會存到這裡，<br>也會排進複習。這裡的內容跟 47 個檔分開。</p><a class="btn primary" href="#/search">去查字</a></div>` : `
       <div class="lib-tools">
         <label class="lib-search">${ic('search')}<input id="lib-q" type="search" placeholder="搜尋英文或中文" value="${esc(L.q)}"></label>
-        <div class="fchips">${f('all', '全部')}${f('star', '複習中')}${f('word', '單字')}${f('sentence', '句子')}</div>
-        <div class="filter-row">
+        <div class="fchips">${f('all', '全部')}${isNewTab ? '' : f('star', '複習中')}${f('word', '單字')}${f('sentence', '句子')}</div>
+        ${isNewTab ? '' : `<div class="filter-row">
           <div class="fchips usage-filter">${[['all', '全部用法'], ['daily', '生活'], ['formal', '正式'], ['rare', '很少用']].map(([k, t]) => `<button class="fchip small ${L.usage === k ? 'on' : ''}" data-act="lib-usage" data-u="${k}">${t}</button>`).join('')}</div>
-        </div>
+        </div>`}
         <div class="filter-row">
-          <label class="sort">檔案
+          ${isNewTab ? '' : `<label class="sort">檔案
             <select id="lib-tag"><option value="">全部</option>${allTags().map((t) => `<option value="${esc(t)}" ${L.tag === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
-          </label>
+          </label>`}
           <label class="sort">排序
             <select id="lib-sort">
-              ${[['recent', '最近查詢'], ['count', '查詢次數'], ['wrong', '最常答錯'], ['file', '檔案順序'], ['az', 'A → Z']].map(([v, t]) => `<option value="${v}" ${L.sort === v ? 'selected' : ''}>${t}</option>`).join('')}
+              ${(isNewTab ? [['recent', '最近加入'], ['wrong', '最常答錯'], ['az', 'A → Z']] : [['file', '檔案順序'], ['wrong', '最常答錯'], ['az', 'A → Z']]).map(([v, t]) => `<option value="${v}" ${sortKey === v ? 'selected' : ''}>${t}</option>`).join('')}
             </select>
           </label>
         </div>
-        <p class="muted small tnum">共 ${total} 筆</p>
+        <p class="muted small tnum">共 ${total} 筆${isNewTab ? ' · 按垃圾桶就刪除，下方可以復原' : ''}</p>
       </div>
-      ${shown.length ? `<ul class="list">${shown.map((e) => entryRow(e)).join('')}</ul>` : '<p class="empty">沒有符合的項目。換個關鍵字或篩選條件試試。</p>'}
-      ${total > shown.length ? `<button class="btn ghost wide" data-act="lib-more">再顯示 ${Math.min(100, total - shown.length)} 筆</button>` : ''}`,
+      ${shown.length ? `<ul class="list">${shown.map((e) => entryRow(e, { del: isNewTab, noTag: !isNewTab })).join('')}</ul>` : '<p class="empty">沒有符合的項目。換個關鍵字或篩選條件試試。</p>'}
+      ${total > shown.length ? `<button class="btn ghost wide" data-act="lib-more">再顯示 ${Math.min(100, total - shown.length)} 筆</button>` : ''}`}`,
       after() {
         const q = document.getElementById('lib-q');
+        if (!q) return;
         let t;
         q.addEventListener('input', () => {
           clearTimeout(t);
@@ -751,7 +1008,7 @@
           }, 200);
         });
         document.getElementById('lib-sort').addEventListener('change', (ev) => { S.lib.sort = ev.target.value; render(); });
-        document.getElementById('lib-tag').addEventListener('change', (ev) => { S.lib.tag = ev.target.value; S.lib.limit = 100; render(); });
+        document.getElementById('lib-tag')?.addEventListener('change', (ev) => { S.lib.tag = ev.target.value; S.lib.limit = 100; render(); });
       },
     };
   }
@@ -761,32 +1018,35 @@
     const e = byId(id);
     if (!e) return viewMissing();
     if (S.editing === e.id) return viewEdit(e);
-    maybeFetchIpa(e);
     const r = e.review;
     const total = (r.right || 0) + (r.wrong || 0);
     const stats = `
       <div class="stats">
-        <div><span class="stat-n tnum">${e.count}</span><span class="stat-l">查詢次數</span></div>
-        <div><span class="stat-n">${rel(e.last)}</span><span class="stat-l">最後查詢</span></div>
         <div><span class="stat-n">${statusPill(e)}</span><span class="stat-l">複習狀態</span></div>
+        <div><span class="stat-n">${rel(e.review.last)}</span><span class="stat-l">上次複習</span></div>
         <div><span class="stat-n tnum">${total ? `${r.right}/${total}` : '—'}</span><span class="stat-l">答對次數</span></div>
       </div>
       ${e.starred && r.due && r.reps ? `<p class="muted small due">下次複習：${r.due <= endOfToday() ? '今天' : rel(r.due)}${r.s ? ` · 記憶穩定度約 ${Math.round(r.s)} 天` : ''}</p>` : ''}`;
-    const tags = e.tags.length ? tagChips(e) : '<span class="muted small">（查詢時加入，沒有檔案標籤）</span>';
+    const tags = e.tags.length ? tagChips(e) : '<span class="muted small">（新查的，沒有檔案標籤）</span>';
     const body = e.type === 'word'
       ? `<section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
          ${formsBlock(e)}
          <section class="block"><h3>例句</h3>${examplesBlock(e)}</section>
          ${notesBlock(e)}
-         ${confusablesBlock(e, true)}`
+         ${relatedBlock(e)}`
       : `<section class="block"><div class="sent-en" lang="en">${sentenceTokens(e.text)}</div></section>
          <section class="block"><h3>中文翻譯</h3><p class="sent-zh">${esc(e.zh)}</p></section>
          ${e.date ? `<p class="muted small">筆記日期：${esc(e.date)}</p>` : ''}`;
-    const del = S.confirm === 'del:' + e.id;
     return {
       title: e.type === 'word' ? '單字詳情' : '句子詳情', tab: 'library', back: '#/library',
       html: `
-      ${e.type === 'word' ? wordHeader(e, true) : `<header class="hw"><div class="hw-line"><h2 class="headword sent-head">句子</h2>${speakBtn(e.text)}</div>${starBtn(e, true)}</header>`}
+      <header class="hw">
+        <div class="wd-tags">${srcTag(e)}</div>
+        <div class="hw-line"><h2 class="headword ${e.type === 'sentence' ? 'sent-head' : ''}" lang="en">${esc(e.type === 'word' ? e.text : '句子')}</h2>${speakBtn(e.text)}</div>
+        ${e.ipa && e.type === 'word' ? `<div class="ipa-line"><span class="ipa">${esc(e.ipa)}</span></div>` : ''}
+        ${e.type === 'word' ? `<div class="usage-row"><span class="muted small">用法</span>${usagePicker(e)}</div>` : ''}
+        ${reviewBtn(e.type === 'word' ? e.id : sentKey(e.text), e)}
+      </header>
       ${stats}
       ${body}
       ${fixesBlock(e)}
@@ -794,8 +1054,8 @@
       <div class="danger-row">
         <button class="btn ghost" data-act="edit" data-id="${esc(e.id)}">${ic('pen')} 編輯</button>
         ${e.starred ? `<button class="btn ghost" data-act="suspend" data-id="${esc(e.id)}">${e.review.suspended ? '恢復複習' : '暫停複習'}</button>` : ''}
-        <button class="btn ghost" data-act="query" data-text="${esc(e.text)}" data-mode="${e.type}">再查一次</button>
-        <button class="btn ghost danger" data-act="delete" data-id="${esc(e.id)}">${del ? '再按一次確定刪除' : '刪除'}</button>
+        <a class="btn ghost" href="${pageHref(e.type, e.text)}">查字典</a>
+        <button class="btn ghost danger" data-act="delete" data-id="${esc(e.id)}">${ic('trash')} 刪除</button>
       </div>`,
     };
   }
@@ -876,6 +1136,7 @@
   const isDue = (e) => inReview(e) && e.review.reps > 0 && e.review.due <= endOfToday();
   const isLeech = (e) => inReview(e) && (e.review.lapses || 0) + Math.max(0, (e.review.wrong || 0) - 1) >= LEECH;
   const notRare = (e) => !(S.settings.skipRare && e.usage === 'rare');
+  const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
   function rollDaily() {
     if (S.daily.date !== today()) { S.daily = { date: today(), newDone: 0 }; DB.setMeta('daily', S.daily).catch(dbFail); }
@@ -883,9 +1144,12 @@
 
   function todayPlan() {
     rollDaily();
-    const due = S.entries.filter((e) => isDue(e) && notRare(e)).sort((a, b) => a.review.due - b.review.due);
+    const due = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e)).sort((a, b) => a.review.due - b.review.due);
     const newLeft = Math.max(0, Number(S.settings.newPerDay) - S.daily.newDone);
-    const fresh = S.entries.filter((e) => isNew(e) && notRare(e)).sort((a, b) => a.order - b.order || a.added - b.added).slice(0, newLeft);
+    // 新查的字優先（剛查過最容易記），再來才是 47 個檔的新字
+    const fresh = S.entries.filter((e) => isNew(e) && notRare(e) && inScope(e))
+      .sort((a, b) => (a.src === 'new' ? 0 : 1) - (b.src === 'new' ? 0 : 1) || (a.src === 'new' ? a.added - b.added : a.order - b.order))
+      .slice(0, newLeft);
     return { due, fresh, newLeft, list: [...due, ...fresh] };
   }
 
@@ -910,7 +1174,8 @@
     if (R.range === 'due') pool = pool.filter(isDue);
     if (R.range === 'recent') pool = pool.filter((e) => Date.now() - (e.review.last || 0) < 7 * DAYMS && e.review.reps);
     if (R.range === 'leech') pool = pool.filter(isLeech);
-    if (R.range === 'lookup') pool = S.entries.filter((e) => e.src === 'lookup' && !e.temp && e.count > 0);
+    if (R.range === 'new') pool = pool.filter((e) => e.src === 'new');
+    if (R.range === 'old') pool = pool.filter((e) => e.src === 'import');
     pool = pool.filter(notRare);
     if (!['flash', 'reverse', 'mix'].includes(R.mode)) pool = pool.filter((e) => e.type === 'word');
     if (R.mode === 'confuse') pool = pool.filter((e) => e.group && S.groups[e.group]);
@@ -1011,6 +1276,9 @@
         : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，都完成了` : '今天沒有要複習的字'}</span>
         <span class="today-s">${inR.length ? '明天再來。想多練可以用下面的自訂複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>`}
       </section>
+      <div class="scope-row"><span class="muted small">每天複習的範圍</span>
+        <div class="seg small-seg">${[['all', '全部'], ['old', '47 個檔'], ['new', '新查的']].map(([k, t]) => `<button class="${S.settings.reviewScope === k ? 'on' : ''}" data-act="rv-scope" data-s="${k}">${t}</button>`).join('')}</div>
+      </div>
       <label class="check skip-rare"><input type="checkbox" id="rv-skip" ${S.settings.skipRare ? 'checked' : ''}> 略過標成 ${usageChip('rare')} 的字</label>
       ${leeches.length ? `<section class="block leech">
         <div class="block-head"><h3>頑固字 · 常忘記的 ${leeches.length} 個</h3><button class="link" data-act="rv-leech">專門練 ${ic('chev')}</button></div>
@@ -1032,7 +1300,8 @@
             ${opt('range', 'due', '今天到期', '')}
             ${opt('range', 'recent', '最近 7 天練過', '')}
             ${opt('range', 'leech', '頑固字', `${leeches.length} 個`)}
-            ${opt('range', 'lookup', '我查過的字', '')}
+            ${opt('range', 'new', '只練新查的', `${inR.filter((e) => e.src === 'new').length} 個`)}
+            ${opt('range', 'old', '只練 47 個檔', '')}
             ${opt('range', 'tag', '依檔案', '')}
           </div>
           ${R.range === 'tag' ? `<label class="sort tag-pick">檔案 <select id="rv-tag">${tags.map((t) => `<option value="${esc(t)}" ${R.tag === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
@@ -1063,7 +1332,7 @@
     return `<div class="progress"><div class="bar"><span style="width:${pct}%"></span></div><span class="tnum small muted">${s.i + 1} / ${s.items.length}</span>
       ${s.undo ? `<button class="link small" data-act="undo">↶ 復原</button>` : ''}</div>`;
   }
-  const kindLabel = (it) => `<p class="q-label">${KIND[it.kind][0]}${it.again ? ' · 再考一次' : ''}</p>`;
+  const kindLabel = (it) => `<p class="q-label">${srcTag(byId(it.id))}<span>${KIND[it.kind][0]}${it.again ? ' · 再考一次' : ''}</span></p>`;
 
   function choiceList(s, it) {
     return `<div class="choices ${it.options.length === 2 ? 'two' : ''}">${it.options.map((oid) => {
@@ -1140,7 +1409,7 @@
         <p class="ex-zh">${esc(it.ex ? it.ex.zh : '')}</p>
       </section>
       ${choiceList(s, it)}
-      ${s.picked && g.note ? `<p class="confuse-note">${ic('alert')} ${esc(g.note)}</p>` : ''}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
+      ${s.picked && (e.related[0] || g.note) ? `<p class="confuse-note">${ic('alert')} ${esc(e.related[0] || g.note)}</p>` : ''}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
     listen(s, it, e) {
       return `
@@ -1295,6 +1564,7 @@
       if (inc.senses.length) cur.senses = inc.senses;
       if (inc.forms) cur.forms = inc.forms;
       if (inc.notes.length) cur.notes = inc.notes;
+      if (inc.related.length) cur.related = inc.related;
       const seen = new Set(inc.examples.map((x) => x.en.toLowerCase()));
       cur.examples = [...inc.examples, ...cur.examples.filter((x) => !seen.has(x.en.toLowerCase()))];
     }
@@ -1304,7 +1574,7 @@
     cur.last = Math.max(cur.last || 0, inc.last || 0) || null;
     cur.starred = cur.starred || inc.starred;
     if ((inc.review.reps || 0) > (cur.review.reps || 0)) cur.review = inc.review;
-    if (cur.src === 'lookup' && inc.src === 'import') { cur.src = 'import'; cur.order = inc.order; }
+    if (cur.src === 'new' && inc.src === 'import') { cur.src = 'import'; cur.order = inc.order; }
     return true;
   }
 
@@ -1321,7 +1591,7 @@
       if (!cur) { addEntry(inc); touched.push(inc); added++; }
       else if (mergeEntry(cur, inc, strategy)) { delete cur.temp; touched.push(cur); updated++; }
     });
-    if (Array.isArray(data.history) && !S.history.length) { S.history = data.history.filter((h) => byId(h.id)); saveHistory(); }
+    if (Array.isArray(data.recent) && !S.recent.length) { S.recent = data.recent.slice(0, RECENT_MAX); saveRecent(); }
     if (data.log && typeof data.log === 'object') {
       Object.entries(data.log).forEach(([k, v]) => { S.log[k] = Math.max(S.log[k] || 0, v); });
       DB.setMeta('log', S.log).catch(dbFail);
@@ -1350,7 +1620,7 @@
     const entries = S.entries.filter((e) => !e.temp).map((e) => { const c = { ...e }; delete c.ipaTried; return c; });
     return {
       app: 'danciben', version: 1, exported: new Date().toISOString(),
-      entries, groups: Object.values(S.groups), history: S.history.slice(0, 500), log: S.log,
+      entries, groups: Object.values(S.groups), recent: S.recent, log: S.log,
     };
   }
 
@@ -1408,7 +1678,7 @@
         <div class="stats three">
           <div><span class="stat-n tnum">${words}</span><span class="stat-l">單字</span></div>
           <div><span class="stat-n tnum">${sents}</span><span class="stat-l">句子</span></div>
-          <div><span class="stat-n tnum">${S.history.length}</span><span class="stat-l">查詢紀錄</span></div>
+          <div><span class="stat-n tnum">${S.entries.filter((e) => e.src === 'new').length}</span><span class="stat-l">新查的</span></div>
         </div>
       </section>
       <p class="author">作者：ArchieKUO</p>`,
@@ -1420,19 +1690,27 @@
       title: '使用說明', tab: 'more', back: '#/more',
       html: `
       <section class="block panel help">
-        <h3>安裝</h3>
-        <p><b>手機（Chrome)</b>：開啟網址 → 右上角 ⋮ → 「加到主畫面」或「安裝應用程式」。</p>
-        <p><b>Windows(Chrome 或 Edge)</b>：網址列右邊的「安裝」圖示 → 安裝。之後從開始功能表開。</p>
+        <h3>查字典</h3>
+        <p>打英文查中文，打中文查英文。英文單字直接查<b>劍橋英漢字典</b>：每個意思都有中文、英文解釋、程度（A1 入門 → C2 精通）和附中文翻譯的例句。</p>
+        <p>如果這個字在你的 47 個檔裡，上面會先顯示<b>我的筆記</b>（綠色標籤寫檔名）。</p>
+        <p>發音：單字用劍橋的真人錄音（美／英），句子用線上自然語音。沒有網路時改用系統語音。</p>
+      </section>
+      <section class="block panel help">
+        <h3>新查的字怎麼保存</h3>
+        <p>查字<b>不會</b>自動保存，只會列在首頁「最近查過」（最多 20 個）。</p>
+        <p>按<b>加入複習</b>才會存下來，放在單字庫的<b>新查的</b>（金色標籤），也會排進複習，而且比 47 個檔的新字優先。</p>
+        <p>新查的字跟 47 個檔分開放。刪除新查的字只要按一次垃圾桶，下方會出現「復原」，按錯可以救回來。</p>
       </section>
       <section class="block panel help">
         <h3>從其他 App 分享</h3>
-        <p>安裝後，在任何 App 選取英文 → 分享 → 選「單字本」，就會直接查詢。</p>
+        <p>在任何 App 選取英文 → 分享（或選取後的選單）→「單字本」，就會直接查詢。</p>
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
         <p>用 FSRS 演算法（Anki 目前用的）：每個字依你記得的程度，算出下次最適合複習的日子。評「記得」間隔會拉長，「忘了」明天再出現。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型會自動從「認得」進到「會用」：閃卡 → 例句挖空、易混淆辨析 → 反向閃卡、拼字、聽力。</p>
+        <p>複習頁可以選每天複習的範圍：全部、只練 47 個檔、只練新查的。每張卡片角落都有標籤，看得出是哪一種。</p>
         <p>常忘記的字會被列為「頑固字」，可以專門練，也可以到單字詳情編輯，加上自己的聯想。</p>
       </section>
       <section class="block panel help">
@@ -1573,7 +1851,9 @@
     return {
       title: '設定', tab: 'more', back: '#/more',
       html: `
-      <section class="block panel"><h3>發音（系統語音）</h3>
+      <section class="block panel"><h3>發音</h3>
+        <label class="set-row"><span>發音來源</span>${sel('set-vmode', 'voiceMode', [['natural', '自然（劍橋真人＋線上語音）'], ['system', '系統語音（不用網路）']])}</label>
+        <p class="muted small">「自然」需要網路：單字用劍橋字典的真人錄音，句子用線上自然語音。沒有網路時會自動改用系統語音。下面的語音設定是給系統語音用的。</p>
         <label class="set-row"><span>語音</span><select id="set-voice" data-set="voice">${voices.length ? `<option value="">自動（${esc((pickVoice() || {}).name || '')})</option>` + voices.map((vc) => `<option value="${esc(vc.name)}" ${st.voice === vc.name ? 'selected' : ''}>${esc(vc.name)}(${esc(vc.lang)})</option>`).join('') : '<option value="">找不到英文語音</option>'}</select></label>
         ${!hasTTS() ? '<p class="bad-txt small">這個瀏覽器不支援系統語音。</p>' : ''}
         <label class="set-row"><span>口音</span>${sel('set-accent', 'accent', [['en-US', '美式'], ['en-GB', '英式']])}</label>
@@ -1630,7 +1910,9 @@
   /* ---------- 路由 ---------- */
   const routes = [
     [/^search$/, viewSearch],
-    [/^result\/(.+)$/, (id) => viewResult(decodeURIComponent(id))],
+    [/^w\/(.+)$/, (q) => viewWord(decodeURIComponent(q))],
+    [/^s\/(.+)$/, (q) => viewSent(decodeURIComponent(q))],
+    [/^result\/(.+)$/, (id) => { const e = byId(decodeURIComponent(id)); if (e) location.replace(pageHref(e.type, e.text)); else go('search'); return { redirect: true }; }],
     [/^share$/, viewShare],
     [/^zh\/(.+)$/, (q) => viewZh(decodeURIComponent(q))],
     [/^library$/, viewLibrary],
@@ -1674,11 +1956,20 @@
   /* ---------- 點擊事件 ---------- */
   const actions = {
     star: (d) => toggleStar(d.id),
-    speak: (d, el) => speak(d.text, d.rate ? parseFloat(d.rate) : null, el),
+    speak: (d, el) => speak(d.text, d.rate ? parseFloat(d.rate) : null, el, d.url),
     'theme-toggle': () => { S.settings.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; applyTheme(); saveTheme(); saveSettings(); render(); },
     query: (d) => { if (d.mode) S.mode = d.mode; runQuery(d.text, d.mode); },
-    'open-sugg': (d) => { const e = byId(d.id); if (e) { recordQuery(e); S.draft = ''; go('result/' + encodeURIComponent(e.id)); } },
-    retry: (d) => { const e = byId(d.id); if (e) fetchOnline(e); },
+    'open-sugg': (d) => { const e = byId(d.id); if (e) { S.draft = ''; location.hash = pageHref(e.type, e.text); } },
+    'rv-toggle': (d) => { const e = entryFor(d.key); if (e && e.starred) removeFromReview(e); else addToReview(d.key); },
+    'del-new': (d) => { const e = byId(d.id); if (e) removeFromReview(e); },
+    'w-retry': (d) => fetchWord(d.q),
+    's-retry': (d) => fetchSentence(d.q),
+    'clear-recent': () => {
+      const old = S.recent;
+      S.recent = []; saveRecent(); render();
+      toastAction('已清除最近查過', '復原', () => { S.recent = old; saveRecent(); render(); });
+    },
+    'lib-src': (d) => { S.lib.src = d.s; S.lib.limit = 100; render(); },
     'zh-retry': (d) => fetchZh(d.q),
     mode: (d) => { S.mode = d.mode; render(); document.getElementById('q')?.focus(); },
     clear: () => { S.draft = ''; render(); document.getElementById('q').focus(); },
@@ -1686,19 +1977,19 @@
     'lib-filter': (d) => { S.lib.filter = d.f; S.lib.limit = 100; render(); },
     'lib-usage': (d) => { S.lib.usage = d.u; S.lib.limit = 100; render(); },
     'lib-tag': (d) => { S.lib = { ...S.lib, tag: d.t, filter: 'all', usage: 'all', q: '', sort: 'file', limit: 100 }; go('library'); },
-    'lib-recent': () => { S.lib = { ...S.lib, tag: '', filter: 'all', usage: 'all', q: '', sort: 'recent', limit: 100 }; go('library'); },
     'lib-more': () => { S.lib.limit += 100; render(); },
     edit: (d) => { S.editing = d.id; render(); window.scrollTo(0, 0); },
     'edit-cancel': () => { S.editing = null; render(); },
     suspend: (d) => { const e = byId(d.id); e.review.suspended = !e.review.suspended; saveEntry(e); toast(e.review.suspended ? '已暫停，複習時不會出現' : '已恢復複習'); render(); },
+    // 一次就刪，下方可以復原
     delete: (d) => {
-      if (S.confirm !== 'del:' + d.id) { S.confirm = 'del:' + d.id; render(); return; }
       const e = byId(d.id);
-      S.entries = S.entries.filter((x) => x !== e); S.index.delete(e.id);
-      S.history = S.history.filter((h) => h.id !== e.id); saveHistory();
-      DB.del('entries', e.id).catch(dbFail);
-      S.confirm = ''; toast('已刪除'); go('library');
+      if (!e) return;
+      removeEntry(e);
+      go('library');
+      toastAction(`已刪除「${e.type === 'word' ? e.text : '這個句子'}」`, '復原', () => { addEntry(e); saveEntry(e); render(); });
     },
+    'rv-scope': (d) => { S.settings.reviewScope = d.s; saveSettings(); render(); },
     'rv-set': (d) => { S.reviewSetup[d.k] = d.v; S.reviewSetup.open = true; render(); },
     'rv-start': () => startCustom(),
     'rv-today': () => startToday(),
@@ -1752,12 +2043,12 @@
     'bk-reset': () => { S.backup = { file: null, parsed: null, strategy: 'merge', result: null }; render(); },
     'clear-history': () => {
       if (S.confirm !== 'clear-history') { S.confirm = 'clear-history'; render(); return; }
-      S.history = []; saveHistory(); S.confirm = ''; toast('已清除查詢紀錄'); render();
+      S.recent = []; saveRecent(); S.confirm = ''; toast('已清除最近查過'); render();
     },
     'clear-all': async () => {
       if (S.confirm !== 'clear-all') { S.confirm = 'clear-all'; render(); return; }
       await Promise.all([DB.clear('entries'), DB.clear('groups'), DB.clear('meta')]);
-      S.entries = []; S.index = new Map(); S.groups = {}; S.history = []; S.log = {}; S.confirm = '';
+      S.entries = []; S.index = new Map(); S.groups = {}; S.recent = []; S.log = {}; S.confirm = '';
       toast('已清除全部資料'); go('search');
     },
   };
@@ -1788,13 +2079,34 @@
     } catch (err) { /* 忽略 */ }
     applyTheme();
     try {
-      const [entries, groups, settings, history, log, daily] = await Promise.all([
+      const [entries, groups, settings, oldHistory, log, daily, recent, cache] = await Promise.all([
         DB.all('entries'), DB.all('groups'), DB.getMeta('settings'), DB.getMeta('history'), DB.getMeta('log'), DB.getMeta('daily'),
+        DB.getMeta('recent'), DB.getMeta('dictCache'),
       ]);
-      entries.forEach((e) => addEntry(normEntry(e)));
+      // 舊版：查過的字會自動存進單字庫。現在只有按「加入複習」才保存，
+      // 所以舊的查詢紀錄：有加星號的搬到「新查的」，沒加的移除（只留在最近查過）。
+      const dropped = [];
+      entries.forEach((raw) => {
+        if (raw.src !== 'import' && raw.src !== 'new') {
+          if (!raw.starred) { dropped.push(raw); DB.del('entries', raw.id).catch(dbFail); return; }
+          raw.src = 'new';
+          DB.put('entries', raw).catch(dbFail);
+        }
+        addEntry(normEntry(raw));
+      });
       groups.forEach((g) => { S.groups[g.id] = g; });
       if (settings) S.settings = { ...DEFAULT_SETTINGS, ...settings };
-      S.history = (history || []).filter((h) => S.index.has(h.id));
+      S.recent = Array.isArray(recent) ? recent : [];
+      if (!recent && Array.isArray(oldHistory)) {
+        const all = new Map([...entries, ...dropped].map((e) => [e.id, e]));
+        S.recent = oldHistory.map((h) => all.get(h.id)).filter(Boolean).slice(0, RECENT_MAX).map((e) => ({
+          key: e.type === 'word' ? wordKey(e.text) : sentKey(e.text), q: e.text, kind: e.type === 'word' ? 'w' : 's',
+          zh: e.type === 'word' ? (e.senses || []).map((x) => x.zh).join('；') : e.zh || '', at: e.last || Date.now(),
+        }));
+        DB.setMeta('recent', S.recent).catch(dbFail);
+        DB.setMeta('history', null).catch(dbFail);
+      }
+      if (cache) Object.entries(cache).forEach(([k, data]) => { S.dict[k] = { status: 'ok', data }; });
       S.log = log || {};
       S.daily = daily || S.daily;
     } catch (err) {
@@ -1807,6 +2119,9 @@
     if (window.SEED && !S.entries.some((e) => e.src === 'import')) {
       document.getElementById('view').innerHTML = '<div class="loading"><span class="spinner"></span>第一次開啟，正在匯入單字簿…</div>';
       await importData(window.SEED, 'merge');
+      DB.setMeta('seedStamp', window.SEED.exported || '').catch(dbFail);
+    } else if (window.SEED) {
+      await syncSeed();
     }
     S.ready = true;
 
@@ -1821,6 +2136,26 @@
     } catch (err) { /* 忽略 */ }
     if (/^#[a-z]/.test(location.hash)) { location.hash = '#/' + location.hash.slice(1); return; }
     render();
+  }
+
+  // 內建的單字簿有更新時（例如修正「相關說明」），只更新筆記內容，不動複習進度
+  async function syncSeed() {
+    const stamp = window.SEED.exported || '';
+    if (await DB.getMeta('seedStamp') === stamp) return;
+    const touched = [];
+    (window.SEED.entries || []).forEach((raw) => {
+      const cur = byId(raw.id);
+      if (!cur || cur.src !== 'import') return;
+      cur.related = Array.isArray(raw.related) ? raw.related : [];
+      cur.group = raw.group || null;
+      touched.push(cur);
+    });
+    S.groups = {};
+    (window.SEED.groups || []).forEach((g) => { S.groups[g.id] = g; });
+    await DB.clear('groups').catch(dbFail);
+    await saveGroups();
+    await saveEntries(touched);
+    await DB.setMeta('seedStamp', stamp).catch(dbFail);
   }
 
   init();

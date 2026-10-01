@@ -292,30 +292,26 @@ def merge(entries, groups):
                 cur['forms']['fam'] += [f for f in e['forms']['fam'] if f['w'].lower() not in have]
                 cur['forms']['infl'] = cur['forms']['infl'] or e['forms']['infl']
         if e.get('group'):
-            if cur.get('group') and cur['group'] != e['group']:
-                parent[find(e['group'])] = find(cur['group'])
-            elif not cur.get('group'):
+            # 不再把不同組串成一大組：每個字記下自己出現過的每一組
+            cur.setdefault('_groups', [])
+            if e['group'] not in cur['_groups']:
+                cur['_groups'].append(e['group'])
+            if not cur.get('group'):
                 cur['group'] = e['group']
         cur['order'] = min(cur['order'], e['order'])
-    # 合併同組
-    gmap = {}
-    for g in groups:
-        root = find(g['id'])
-        if root not in gmap:
-            gmap[root] = {'id': root, 'name': '', 'note': '', 'members': []}
-        tgt = gmap[root]
-        for m in g['members']:
-            if m not in tgt['members']:
-                tgt['members'].append(m)
-        if g['note'] and g['note'] not in tgt['note']:
-            tgt['note'] = (tgt['note'] + ' ' + g['note']).strip()
-    for g in gmap.values():
-        g['name'] = ' / '.join(m[2:] for m in g['members'])
+    # 每組保持原樣；每個字的「相關說明」= 它所在各組的筆記
+    gmap = {g['id']: g for g in groups}
     for e in by.values():
         if e.get('examples'):
             e['examples'].sort(key=lambda x: not x.get('easy'))
-        if e.get('group'):
-            e['group'] = find(e['group'])
+        gids = ([e['group']] if e.get('group') else []) + e.pop('_groups', [])
+        rel = []
+        for gid in gids:
+            n = (gmap.get(gid) or {}).get('note', '')
+            if n and n not in rel:
+                rel.append(n)
+        if rel:
+            e['related'] = rel
     return list(by.values()), list(gmap.values())
 
 

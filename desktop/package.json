@@ -17,7 +17,7 @@
     "appId": "tw.archiekuo.danciben",
     "productName": "Danciben",
     "copyright": "ArchieKUO",
-    "files": ["main.js", "www/**/*"],
+    "files": ["main.js", "preload.js", "www/**/*"],
     "directories": { "output": "dist" },
     "win": {
       "target": "nsis",

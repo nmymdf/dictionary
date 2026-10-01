@@ -29,9 +29,12 @@ import android.webkit.WebViewClient;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -295,6 +298,44 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return "fail";
             }
+        }
+
+        /** 代抓劍橋字典網頁（網頁本身不能跨網站讀取），抓完呼叫 window.__nativeFetchDone。 */
+        @JavascriptInterface
+        public void fetchText(String id, String url) {
+            new Thread(() -> {
+                int status = 0;
+                String finalUrl = url;
+                String text = "";
+                if (url != null && url.startsWith("https://dictionary.cambridge.org/")) {
+                    HttpURLConnection c = null;
+                    try {
+                        c = (HttpURLConnection) new URL(url).openConnection();
+                        c.setInstanceFollowRedirects(true);
+                        c.setConnectTimeout(10000);
+                        c.setReadTimeout(15000);
+                        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36");
+                        c.setRequestProperty("Accept-Language", "zh-TW,zh;q=0.9,en;q=0.8");
+                        status = c.getResponseCode();
+                        finalUrl = c.getURL().toString();
+                        InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
+                        if (in != null) {
+                            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                            byte[] b = new byte[16384];
+                            int n;
+                            while ((n = in.read(b)) > 0) buf.write(b, 0, n);
+                            in.close();
+                            text = buf.toString("UTF-8");
+                        }
+                    } catch (Exception e) {
+                        status = 0;
+                    } finally {
+                        if (c != null) c.disconnect();
+                    }
+                }
+                js("window.__nativeFetchDone && window.__nativeFetchDone(" + JSONObject.quote(id) + "," + status + ","
+                        + JSONObject.quote(finalUrl) + "," + JSONObject.quote(text) + ")");
+            }).start();
         }
 
         /** 讓狀態列、導覽列跟著白底／黑底。 */
