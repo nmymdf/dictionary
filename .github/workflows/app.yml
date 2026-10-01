@@ -1,0 +1,119 @@
+# 單字本 App：Android（APK）＋ Windows（zip），每次推送都自動編譯並發佈到 Releases。
+# 這個 repo 是公開的，不含單字資料；已經裝過的 App 更新後，資料都還在裝置裡。
+name: App
+
+on:
+  push:
+    branches: [claude/epic-shannon-lmuump, main]
+    paths:
+      - 'android/**'
+      - 'desktop/**'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - '.github/workflows/app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Copy web app into the APK
+        run: |
+          mkdir -p android/app/src/main/assets/www
+          cp -r index.html manifest.webmanifest css js icons android/app/src/main/assets/www/
+
+      - name: Build APK
+        working-directory: android
+        # 版本號用時間（分鐘），新版一定比舊版大，可以直接覆蓋安裝
+        run: VERSION_CODE=$(( $(date +%s) / 60 )) gradle --no-daemon assembleRelease
+
+      - name: Rename
+        run: cp android/app/build/outputs/apk/release/app-release.apk danciben.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: danciben.apk
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Copy web app
+        run: |
+          mkdir -p desktop/www
+          cp -r index.html manifest.webmanifest css js icons desktop/www/
+
+      - name: Build zip
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win zip --publish never
+
+      # 自我測試：真的開啟程式，查 Yahoo 字典、備用字典、翻譯、發音
+      - name: Self test
+        working-directory: desktop
+        run: |
+          timeout 150 ./dist/win-unpacked/Danciben.exe --selftest="$(cygpath -w "$PWD")\\selftest.json" || echo "exit $?"
+          cat selftest.json || echo "no selftest output"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            desktop/dist/danciben-windows.zip
+            desktop/selftest.json
+
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+
+      - name: Collect
+        run: |
+          mkdir rel
+          find art -name danciben.apk -exec cp {} rel/ \;
+          find art -name danciben-windows.zip -exec cp {} rel/ \;
+          find art -name selftest.json -exec cp {} rel/ \;
+          ls -la rel
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-${{ github.run_number }}
+          name: 單字本 App（第 ${{ github.run_number }} 版）
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            手機：下載 `danciben.apk` → 安裝（覆蓋舊版，資料保留）。
+            電腦：下載 `danciben-windows.zip` → 全部解壓縮 → 按兩下 Danciben.exe。
+          files: |
+            rel/danciben.apk
+            rel/danciben-windows.zip
+            rel/selftest.json
