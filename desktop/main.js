@@ -10,6 +10,8 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1200,
     height: 900,
+    minWidth: 380,
+    minHeight: 520,
     title: '單字本',
     autoHideMenuBar: true,
     backgroundColor: '#f7f8f6',
@@ -26,20 +28,21 @@ function createWindow() {
   });
 }
 
-// 代抓字典網頁（網頁本身不能跨網站讀取）：劍橋、Google 翻譯、Free Dictionary、MyMemory
-const ALLOW = ['https://dictionary.cambridge.org/', 'https://translate.googleapis.com/', 'https://api.dictionaryapi.dev/', 'https://api.mymemory.translated.net/'];
+// 代抓字典網頁（網頁本身不能跨網站讀取）：Yahoo 字典、Google 翻譯、Free Dictionary、MyMemory
+const ALLOW = ['https://tw.dictionary.search.yahoo.com/', 'https://translate.googleapis.com/', 'https://api.dictionaryapi.dev/', 'https://api.mymemory.translated.net/'];
+const LIMIT = 6000;   // 每種連線最多等 6 秒
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 const HEADERS = { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8' };
 
 // 方法一：Electron 的 net.fetch（跟 Chrome 一樣的網路設定，包含代理伺服器）
 async function viaNet(url) {
-  const r = await net.fetch(url, { headers: HEADERS, redirect: 'follow' });
+  const r = await net.fetch(url, { headers: HEADERS, redirect: 'follow', signal: AbortSignal.timeout(LIMIT) });
   return { status: r.status, url: r.url || url, text: await r.text() };
 }
 // 方法二：Node 內建的 https（萬一方法一失敗）
 function viaNode(url, depth = 0) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: HEADERS, timeout: 15000 }, (res) => {
+    const req = https.get(url, { headers: HEADERS, timeout: LIMIT }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && depth < 5) {
         res.resume();
         resolve(viaNode(new URL(res.headers.location, url).toString(), depth + 1));
@@ -70,11 +73,11 @@ async function fetchText(url) {
 ipcMain.handle('fetch-text', (ev, url) => fetchText(url));
 
 // 發音檔：先下載再播放（避免網站擋外部播放）
-const AUDIO_ALLOW = ['https://dictionary.cambridge.org/media/', 'https://translate.google.com/translate_tts'];
+const AUDIO_ALLOW = ['https://translate.google.com/translate_tts'];
 async function fetchAudio(url) {
   if (typeof url !== 'string' || !AUDIO_ALLOW.some((a) => url.startsWith(a))) return null;
   try {
-    const r = await net.fetch(url, { headers: { 'User-Agent': UA, 'Referer': url.includes('cambridge') ? 'https://dictionary.cambridge.org/' : 'https://translate.google.com/' } });
+    const r = await net.fetch(url, { headers: { 'User-Agent': UA, 'Referer': 'https://translate.google.com/' }, signal: AbortSignal.timeout(LIMIT) });
     if (r.status < 200 || r.status >= 400) return null;
     return Buffer.from(await r.arrayBuffer()).toString('base64');
   } catch (err) {
@@ -87,18 +90,20 @@ ipcMain.handle('fetch-audio', (ev, url) => fetchAudio(url));
 const SELFTEST = (process.argv.find((a) => a.startsWith('--selftest=')) || '').slice(11);
 async function runSelftest() {
   const out = { main: {} };
-  for (const u of ['https://dictionary.cambridge.org/dictionary/english-chinese-traditional/test', 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-TW&dt=t&q=test']) {
+  for (const u of ['https://tw.dictionary.search.yahoo.com/search?p=concession', 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-TW&dt=t&q=test']) {
+    const t0 = Date.now();
     const r = await fetchText(u);
-    out.main[u.slice(8, 40)] = { status: r.status, len: r.text.length, error: r.error || '' };
+    out.main[u.slice(8, 40)] = { status: r.status, len: r.text.length, ms: Date.now() - t0, error: r.error || '' };
   }
   const a1 = await fetchAudio('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=test');
   out.audioGoogle = a1 ? a1.length : 0;
-  const a2 = await fetchAudio('https://dictionary.cambridge.org/media/english-chinese-traditional/us_pron/t/tes/test_/test.mp3');
-  out.audioCamb = a2 ? a2.length : 0;
   try {
     out.page = await win.webContents.executeJavaScript(`(async () => {
-      const r = { hasDesktop: !!window.DesktopApp, canFetch: !!(window.Cambridge && Cambridge.canFetch()) };
-      try { const d = await Cambridge.lookup('test'); r.camb = d ? d.entries.map((e) => e.pos.join('/') + ':' + e.senses.length + ':' + (e.senses[0] || {}).zh).join(' | ') : 'null'; } catch (e) { r.cambErr = String(e && e.message || e); }
+      const r = { hasDesktop: !!window.DesktopApp, canFetch: !!(window.Yahoo && Yahoo.canFetch()) };
+      for (const q of ['concession', 'give up', '放棄', 'asdfqwer']) {
+        const t0 = performance.now();
+        try { const d = await Yahoo.lookup(q); r['yahoo ' + q] = (d ? d.gist.map((g) => g.pos + ' ' + g.zh).join(' | ') + ' / ' + d.entries.length + ' entries' : 'null') + ' / ' + Math.round(performance.now() - t0) + 'ms'; } catch (e) { r['yahooErr ' + q] = String(e && e.message || e); }
+      }
       try { const w = await Lookup.word('test'); r.basic = JSON.stringify(w.senses).slice(0, 150); } catch (e) { r.basicErr = String(e && e.message || e); }
       try { r.sent = await Lookup.sentence('How are you?'); } catch (e) { r.sentErr = String(e && e.message || e); }
       try { const z = await Lookup.zh('放棄'); r.zh = z.en + ' / ' + z.groups.length; } catch (e) { r.zhErr = String(e && e.message || e); }

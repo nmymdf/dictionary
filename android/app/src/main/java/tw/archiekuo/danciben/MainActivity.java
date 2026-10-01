@@ -300,20 +300,20 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** 代抓劍橋字典網頁（網頁本身不能跨網站讀取），抓完呼叫 window.__nativeFetchDone。 */
+        /** 代抓 Yahoo 字典網頁（網頁本身不能跨網站讀取），抓完呼叫 window.__nativeFetchDone。 */
         @JavascriptInterface
         public void fetchText(String id, String url) {
             new Thread(() -> {
                 int status = 0;
                 String finalUrl = url;
                 String text = "";
-                if (url != null && url.startsWith("https://dictionary.cambridge.org/")) {
+                if (url != null && url.startsWith("https://tw.dictionary.search.yahoo.com/")) {
                     HttpURLConnection c = null;
                     try {
                         c = (HttpURLConnection) new URL(url).openConnection();
                         c.setInstanceFollowRedirects(true);
-                        c.setConnectTimeout(10000);
-                        c.setReadTimeout(15000);
+                        c.setConnectTimeout(5000);
+                        c.setReadTimeout(6000);
                         c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36");
                         c.setRequestProperty("Accept-Language", "zh-TW,zh;q=0.9,en;q=0.8");
                         status = c.getResponseCode();

@@ -7,7 +7,7 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 rd = lambda p: open(os.path.join(root, p), encoding='utf-8').read()
 h = rd('index.html')
 body = h[h.index('<!--APP-->'):h.index('<!--/APP-->')]
-js = ''.join(rd(p) + '\n' for p in ['js/vendor/jszip.min.js', 'js/db.js', 'js/srs.js', 'js/lookup.js', 'js/cambridge.js', 'js/docx.js', 'js/app.js'])
+js = ''.join(rd(p) + '\n' for p in ['js/vendor/jszip.min.js', 'js/db.js', 'js/srs.js', 'js/lookup.js', 'js/yahoo.js', 'js/docx.js', 'js/app.js'])
 seed = ''
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
 standalone = '--standalone' in sys.argv
