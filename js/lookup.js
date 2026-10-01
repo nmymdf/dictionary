@@ -18,6 +18,12 @@
   }
 
   async function getJSON(url) {
+    // Windows 版：由程式本身代抓，不受網頁跨網站限制
+    if (window.DesktopApp && window.DesktopApp.fetchText) {
+      const r = await window.DesktopApp.fetchText(url);
+      if (!r || r.status < 200 || r.status >= 400) throw new Error(r && r.error ? r.error : 'HTTP ' + (r && r.status));
+      return JSON.parse(r.text);
+    }
     const res = await fetch(url, { signal: timeout(10000) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();

@@ -236,9 +236,19 @@
   function playUrls(urls, rate) {
     return new Promise((resolve, reject) => {
       let i = 0;
-      const next = () => {
+      const next = async () => {
         if (i >= urls.length) { resolve(); return; }
-        const a = new Audio(urls[i++]);
+        let src = urls[i++];
+        // Windows 版：先由程式下載發音檔再播放
+        if (window.DesktopApp && window.DesktopApp.fetchAudio) {
+          const b64 = await window.DesktopApp.fetchAudio(src).catch(() => null);
+          if (!b64) { reject(new Error('audio')); return; }
+          const bin = atob(b64);
+          const buf = new Uint8Array(bin.length);
+          for (let k = 0; k < bin.length; k++) buf[k] = bin.charCodeAt(k);
+          src = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
+        }
+        const a = new Audio(src);
         curAudio = a;
         a.playbackRate = rate;
         a.onended = next;
@@ -408,11 +418,12 @@
     const key = wordKey(word);
     S.dict[key] = { status: 'loading' };
     let data = null, err = null, notFound = false;
+    const why = [];
     if (window.Cambridge && Cambridge.canFetch()) {
-      try { data = await Cambridge.lookup(word); notFound = !data; } catch (e) { err = e; }
+      try { data = await Cambridge.lookup(word); notFound = !data; } catch (e) { err = e; why.push('劍橋：' + (e.message || e)); }
     }
     if (!data) {
-      try { data = basicToDict(word, await Lookup.word(word)); err = null; } catch (e) { err = err || e; }
+      try { data = basicToDict(word, await Lookup.word(word)); err = null; } catch (e) { err = err || e; why.push('備用字典：' + (e.message || e)); }
     }
     if (data) {
       S.dict[key] = { status: 'ok', data };
@@ -423,6 +434,7 @@
       S.dict[key] = {
         status: 'error',
         msg: navigator.onLine === false ? '沒有網路連線' : notFound ? `字典裡沒有「${word}」，請檢查拼字` : '字典沒有回應',
+        why: why.join('；'),
       };
     }
     if (location.hash === '#/w/' + encodeURIComponent(word)) render();
@@ -766,7 +778,7 @@
     const uk = (d && d.uk) || (e && e.audio && { audio: e.audio.uk, ipa: '' });
     const one = (r, label, p) => `<button class="pron" data-act="speak" data-text="${esc(word)}" data-url="${esc((p && p.audio) || '')}">
       <span class="pron-r">${label}</span>${p && p.ipa ? `<span class="ipa" lang="en">${esc(p.ipa)}</span>` : ''}${ic('speaker')}</button>`;
-    if (!us && !uk) return `<div class="pron-row">${one('us', '發音', e && e.ipa ? { ipa: e.ipa } : null)}</div>`;
+    if (!us && !uk) return `<div class="pron-row"><button class="pron" data-act="speak" data-text="${esc(word)}">${ic('speaker')}${e && e.ipa ? `<span class="ipa" lang="en">${esc(e.ipa)}</span>` : '<span>唸出來</span>'}</button></div>`;
     return `<div class="pron-row">${us ? one('us', '美', us) : ''}${uk ? one('uk', '英', uk) : ''}</div>`;
   }
 
@@ -844,7 +856,7 @@
     let dict = '';
     if (d) dict = dictHtml(d, word);
     else if (st.status === 'loading') dict = loadingBox('正在查劍橋字典…');
-    else dict = errBox(st.msg, 'w-retry', `data-q="${esc(word)}"`);
+    else dict = errBox(st.msg, 'w-retry', `data-q="${esc(word)}"`) + (st.why ? `<p class="muted small err-why">詳細原因：${esc(st.why)}</p>` : '');
     return {
       title: '單字', tab: 'search', back: '#/search',
       html: `

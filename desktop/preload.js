@@ -3,4 +3,5 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('DesktopApp', {
   fetchText: (url) => ipcRenderer.invoke('fetch-text', url),
+  fetchAudio: (url) => ipcRenderer.invoke('fetch-audio', url),
 });

@@ -25,7 +25,7 @@
     if (window.DesktopApp && window.DesktopApp.fetchText) {
       return Promise.race([
         window.DesktopApp.fetchText(url).then((r) => {
-          if (!r || r.status < 200 || r.status >= 400) throw new Error(r && r.status ? 'HTTP ' + r.status : '連不上劍橋字典');
+          if (!r || r.status < 200 || r.status >= 400) throw new Error(r && r.status ? 'HTTP ' + r.status : '連不上劍橋字典' + (r && r.error ? '（' + r.error + '）' : ''));
           return r;
         }),
         new Promise((_, rej) => setTimeout(() => rej(new Error('劍橋字典沒有回應')), ms)),
