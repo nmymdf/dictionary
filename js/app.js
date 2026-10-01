@@ -467,6 +467,10 @@
     return list.map((e) => `<li><a href="#/result/${encodeURIComponent(e.id)}" data-act="open-sugg" data-id="${esc(e.id)}"><b lang="en">${esc(e.text)}</b><span>${esc(zhShort(e))}</span></a></li>`).join('');
   }
 
+  function heroDate() {
+    const d = new Date();
+    return `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${'日一二三四五六'[d.getDay()]}`;
+  }
   function viewSearch() {
     const recent = S.history.slice(0, 10).map((h) => ({ e: byId(h.id), at: h.at })).filter((x) => x.e && !x.e.temp);
     const isSent = S.mode === 'sentence';
@@ -475,20 +479,24 @@
       title: '查詢', tab: 'search', hideTitle: true,
       html: `
       <div class="search-hero">
+        <div class="hero-greet">
+          <p class="hero-date">${heroDate()}</p>
+          <h2>今天想查什麼？</h2>
+          <p class="hero-sub">英文查中文，中文查英文</p>
+        </div>
         <div class="seg" role="tablist" aria-label="查詢模式">
           <button role="tab" class="${!isSent ? 'on' : ''}" data-act="mode" data-mode="word" aria-selected="${!isSent}">單字</button>
           <button role="tab" class="${isSent ? 'on' : ''}" data-act="mode" data-mode="sentence" aria-selected="${isSent}">句子</button>
         </div>
-        <form class="search-box ${isSent ? 'tall' : ''}" id="search-form">
+        <form class="search-box ${isSent ? 'tall' : ''} ${S.draft ? 'has-text' : ''}" id="search-form">
           <textarea id="q" rows="${isSent ? 4 : 1}" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false" enterkeyhint="search"
-            placeholder="${isSent ? '貼上英文或中文句子' : '英文或中文'}">${esc(S.draft)}</textarea>
+            placeholder="${isSent ? '貼上英文或中文句子' : '英文／中文'}">${esc(S.draft)}</textarea>
           <div class="search-actions">
             <button type="button" class="icon-btn ghost" data-act="clear" aria-label="清除">${ic('x')}</button>
             <button type="submit" class="btn primary">${ic('search')}<span>${isSent ? '翻譯' : '查詢'}</span></button>
           </div>
         </form>
         <ul class="suggest" id="suggest">${suggestHtml(S.draft)}</ul>
-        <p class="input-hint">打英文查中文，打中文查英文</p>
         <p class="input-hint">${ic('mic')} 用鍵盤上的麥克風說 ${ic('pen')} 或用 S Pen 直接手寫</p>
         <p class="input-hint auto-hint" id="auto-hint" hidden>看起來像句子，<button class="link" data-act="mode" data-mode="sentence">改用句子翻譯</button></p>
       </div>
@@ -508,6 +516,7 @@
         const sug = document.getElementById('suggest');
         ta.addEventListener('input', () => {
           S.draft = ta.value;
+          ta.closest('form').classList.toggle('has-text', !!ta.value);
           hint.hidden = !(S.mode === 'word' && looksLikeSentence(ta.value));
           sug.innerHTML = suggestHtml(ta.value);
         });
@@ -1652,7 +1661,7 @@
     document.getElementById('view').innerHTML = v.html;
     const tb = document.getElementById('topbar');
     const dark = document.documentElement.dataset.theme === 'dark';
-    tb.innerHTML = `${v.back ? `<a class="icon-btn" href="${v.back}" aria-label="返回">${ic('back')}</a>` : '<span class="brand-sm">單字本</span>'}
+    tb.innerHTML = `${v.back ? `<a class="icon-btn" href="${v.back}" aria-label="返回">${ic('back')}</a>` : '<span class="brand-sm"><span class="brand-mark">單</span><span class="brand-text">單字本</span></span>'}
       <h1 class="${v.hideTitle ? 'sr-only' : ''}">${esc(v.title)}</h1>
       <button class="icon-btn theme-btn" data-act="theme-toggle" aria-label="${dark ? '切換成白底' : '切換成黑底'}">${ic(dark ? 'sun' : 'moon')}</button>`;
     document.title = `${v.title} · 單字本`;

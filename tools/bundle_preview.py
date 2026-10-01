@@ -16,7 +16,7 @@ if len(args) > 1:
 safe_js = js.replace('</script', '<\\/script')
 out = f'''<title>單字本</title>
 <meta name="theme-color" content="#f7f8f6">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,600;7..72,700&family=Noto+Serif+TC:wght@600;700&display=swap">
 <style>
 {rd('css/app.css')}
 </style>
