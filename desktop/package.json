@@ -1,0 +1,36 @@
+{
+  "name": "danciben",
+  "version": "1.0.0",
+  "description": "單字本：中英雙向查詢與複習",
+  "author": "ArchieKUO",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "tw.archiekuo.danciben",
+    "productName": "Danciben",
+    "copyright": "ArchieKUO",
+    "files": ["main.js", "www/**/*"],
+    "directories": { "output": "dist" },
+    "win": {
+      "target": "nsis",
+      "icon": "www/icons/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "單字本",
+      "artifactName": "danciben-setup.exe",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

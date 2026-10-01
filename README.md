@@ -28,11 +28,10 @@ App 裡：發音用手機的文字轉語音；匯出備份會存到「下載/單
 
 每次推送程式碼，GitHub Actions（`.github/workflows/android.yml`）會自動編譯並發佈新版到 Releases。
 
-### Windows（PWA）
+### Windows
 
-1. 在這個 repo 的 **Settings → Pages** 開啟 GitHub Pages（Deploy from a branch，資料夾 `/ (root)`）。
-2. 用 Chrome 或 Edge 開網址 → 網址列右邊的「安裝」圖示。
-3. 「更多 → 匯出 / 匯入 JSON」匯入 `danciben-import.json`（在私人 repo `vocab-files`）或手機匯出的備份。
+- **安裝程式**：`desktop/` 是 Windows 版（Electron），用 `npm install && npx electron-builder --win nsis` 做出 `danciben-setup.exe`，裝好後桌面會有「單字本」。私人 repo `vocab-files` 的 GitHub Actions 會連同單字資料一起做好。
+- **或用 PWA**：在這個 repo 的 Settings → Pages 開啟 GitHub Pages，用 Chrome / Edge 開網址 → 網址列右邊的「安裝」。
 
 ## 開發
 
@@ -49,6 +48,7 @@ python3 -m http.server 8000     # 開 http://localhost:8000
 - `sw.js`、`manifest.webmanifest`：PWA（離線外殼、分享目標）
 - `tools/build_import.py`：把整理好的單字卡（私人 repo）組成匯入用 JSON
 - `tools/bundle_preview.py`：打包成單一 HTML（加 `--standalone` 可以直接開檔案）
+- `desktop/`：Windows 版（Electron）
 - `android/`：Android App（WebView 外殼，提供發音、選檔、存檔、分享進來）
 
 這個 repo 是公開的，**不放任何單字資料**；資料在私人 repo `vocab-files`。
