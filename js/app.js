@@ -27,6 +27,7 @@
     backup: { file: null, parsed: null, strategy: 'merge', result: null },
     imp: { step: 1, files: [], parsed: null, error: '' },
     shareText: null,
+    zh: {},
     pending: {},           // 線上查詢中/失敗 { id: 'loading' | 'error：訊息' }
     confirm: '',           // 需要再按一次確認的動作
   };
@@ -279,7 +280,8 @@
   const go = (path) => { location.hash = '#/' + path; };
 
   /* ---------- 查詢 ---------- */
-  function looksLikeSentence(t) { return normText(t).split(' ').length > 3 || /[.!?]$/.test(normText(t)); }
+  const hasZh = (t) => /[\u3400-\u9fff]/.test(t);
+  function looksLikeSentence(t) { if (hasZh(t)) return false; return normText(t).split(' ').length > 3 || /[.!?]$/.test(normText(t)); }
 
   function recordQuery(e) {
     e.count += 1;
@@ -293,6 +295,8 @@
   function runQuery(raw, mode) {
     const text = normText(raw).replace(/^["“'(]+|["”')]+$/g, '');
     if (!text) { toast('先輸入要查的單字或句子'); return; }
+    // 打中文：中查英
+    if (hasZh(text)) { S.draft = ''; go('zh/' + encodeURIComponent(text)); return; }
     mode = mode || S.mode;
     const clean = mode === 'word' ? text.replace(/[.,!?;:]+$/, '') : text;
     const id = makeId(mode, clean);
@@ -427,8 +431,30 @@
   }
 
   /* ---------- 畫面：查詢 ---------- */
+  // 在單字簿裡找中文意思含有這個詞的字；意思剛好等於這個詞的排前面
+  function zhMatches(q, limit) {
+    const parts = (e) => (e.type === 'word' ? e.senses.map((x) => x.zh).join('；') : e.zh || '').split(/[；;，,、／/（）()\s]+/);
+    const out = [];
+    for (const e of S.entries) {
+      if (e.temp) continue;
+      const zh = e.type === 'word' ? e.senses.map((x) => x.zh).join('；') : e.zh || '';
+      if (!zh.includes(q)) {
+        // 意思裡沒有，但例句的中文有：排最後
+        if (e.type === 'word' && e.examples.some((x) => (x.zh || '').includes(q))) out.push({ e, score: 8 });
+        continue;
+      }
+      const exact = parts(e).includes(q);
+      out.push({ e, score: (exact ? 0 : 2) + (e.type === 'word' ? 0 : 4) + (e.starred ? 0 : 1) });
+    }
+    out.sort((a, b) => a.score - b.score || a.e.text.length - b.e.text.length);
+    const res = out.filter((x) => x.score < 8).slice(0, limit).map((x) => x.e);
+    res.inExamples = out.filter((x) => x.score >= 8).slice(0, 10).map((x) => x.e);
+    return res;
+  }
+
   function suggestions(q) {
     q = q.trim().toLowerCase();
+    if (q && hasZh(q)) return zhMatches(q, 6).filter((e) => e.type === 'word');
     if (!q || S.mode !== 'word') return [];
     const out = [];
     for (const e of S.entries) {
@@ -455,13 +481,14 @@
         </div>
         <form class="search-box ${isSent ? 'tall' : ''}" id="search-form">
           <textarea id="q" rows="${isSent ? 4 : 1}" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false" enterkeyhint="search"
-            placeholder="${isSent ? '貼上英文句子' : '英文單字'}">${esc(S.draft)}</textarea>
+            placeholder="${isSent ? '貼上英文或中文句子' : '英文或中文'}">${esc(S.draft)}</textarea>
           <div class="search-actions">
             <button type="button" class="icon-btn ghost" data-act="clear" aria-label="清除">${ic('x')}</button>
             <button type="submit" class="btn primary">${ic('search')}<span>${isSent ? '翻譯' : '查詢'}</span></button>
           </div>
         </form>
         <ul class="suggest" id="suggest">${suggestHtml(S.draft)}</ul>
+        <p class="input-hint">打英文查中文，打中文查英文</p>
         <p class="input-hint">${ic('mic')} 用鍵盤上的麥克風說 ${ic('pen')} 或用 S Pen 直接手寫</p>
         <p class="input-hint auto-hint" id="auto-hint" hidden>看起來像句子，<button class="link" data-act="mode" data-mode="sentence">改用句子翻譯</button></p>
       </div>
@@ -490,6 +517,52 @@
         document.getElementById('search-form').addEventListener('submit', (ev) => { ev.preventDefault(); runQuery(ta.value); });
         if (window.matchMedia('(min-width: 900px)').matches) ta.focus();
       },
+    };
+  }
+
+  /* ---------- 畫面：中查英 ---------- */
+  async function fetchZh(q) {
+    S.zh[q] = { status: 'loading' };
+    try {
+      S.zh[q] = { status: 'ok', data: await Lookup.zh(q) };
+    } catch (err) {
+      S.zh[q] = { status: 'error', msg: navigator.onLine === false ? '沒有網路連線' : '查詢服務沒有回應' };
+    }
+    if (location.hash === '#/zh/' + encodeURIComponent(q)) render();
+  }
+  function viewZh(q) {
+    if (!S.zh[q]) fetchZh(q);
+    const r = S.zh[q];
+    const mine = zhMatches(q, 30);
+    const words = mine.filter((e) => e.type === 'word');
+    const sents = mine.filter((e) => e.type === 'sentence').slice(0, 8);
+    let online = '';
+    if (r.status === 'loading') online = '<div class="loading"><span class="spinner"></span>正在查英文…</div>';
+    else if (r.status === 'error') {
+      online = `<div class="error-box">${ic('alert')}<div><b>查不到：${esc(r.msg)}</b><br><span class="small">確認有連上網路後再試一次。</span></div>
+        <button class="btn small" data-act="zh-retry" data-q="${esc(q)}">重試</button></div>`;
+    } else {
+      const d = r.data;
+      online = `
+      ${d.en ? `<section class="block panel zh-en">
+        <div class="zh-en-head"><div class="sent-en" lang="en">${sentenceTokens(d.en)}</div>
+        <button class="icon-btn" data-act="speak" data-text="${esc(d.en)}" aria-label="唸出來">${ic('speaker')}</button></div>
+        <p class="tap-hint">點英文字可以查那個字</p>
+      </section>` : ''}
+      ${d.groups.map((gr) => `<section class="block"><h3>${esc(gr.pos || '其他')}</h3>
+        <ul class="list zh-list">${gr.words.map((w) => `<li class="zh-row">
+          <button class="zh-pick" data-act="query" data-text="${esc(w.en)}" data-mode="word"><b lang="en">${esc(w.en)}</b><span>${esc(w.zh)}</span></button>
+          <button class="icon-btn row-speak" data-act="speak" data-text="${esc(w.en)}" aria-label="唸出來">${ic('speaker')}</button></li>`).join('')}</ul>
+      </section>`).join('')}`;
+    }
+    return {
+      title: '中查英', tab: 'search', back: '#/search',
+      html: `
+      <h2 class="zh-q">${esc(q)}</h2>
+      ${words.length ? `<section class="block"><h3>你的單字簿裡</h3><ul class="list">${words.map((e) => entryRow(e, { toResult: true })).join('')}</ul></section>` : ''}
+      ${online}
+      ${mine.inExamples.length ? `<section class="block"><h3>例句裡有「${esc(q)}」的字</h3><ul class="list">${mine.inExamples.map((e) => entryRow(e, { toResult: true })).join('')}</ul></section>` : ''}
+      ${sents.length ? `<section class="block"><h3>你的句子裡</h3><ul class="list">${sents.map((e) => entryRow(e, { toResult: true })).join('')}</ul></section>` : ''}`,
     };
   }
 
@@ -570,6 +643,7 @@
   /* ---------- 畫面：分享進來 ---------- */
   function viewShare() {
     const text = S.shareText;
+    if (text && hasZh(text) && text.length <= 40) { S.shareText = null; go('zh/' + encodeURIComponent(text.trim())); return { redirect: true }; }
     if (!text) {
       return {
         title: '從其他 App 分享', tab: 'search', back: '#/search',
@@ -1549,6 +1623,7 @@
     [/^search$/, viewSearch],
     [/^result\/(.+)$/, (id) => viewResult(decodeURIComponent(id))],
     [/^share$/, viewShare],
+    [/^zh\/(.+)$/, (q) => viewZh(decodeURIComponent(q))],
     [/^library$/, viewLibrary],
     [/^entry\/(.+)$/, (id) => viewEntry(decodeURIComponent(id))],
     [/^review$/, viewReviewHome],
@@ -1595,6 +1670,7 @@
     query: (d) => { if (d.mode) S.mode = d.mode; runQuery(d.text, d.mode); },
     'open-sugg': (d) => { const e = byId(d.id); if (e) { recordQuery(e); S.draft = ''; go('result/' + encodeURIComponent(e.id)); } },
     retry: (d) => { const e = byId(d.id); if (e) fetchOnline(e); },
+    'zh-retry': (d) => fetchZh(d.q),
     mode: (d) => { S.mode = d.mode; render(); document.getElementById('q')?.focus(); },
     clear: () => { S.draft = ''; render(); document.getElementById('q').focus(); },
     'set-usage': (d) => { const e = byId(d.id); e.usage = e.usage === d.u ? null : d.u; e.edited = true; saveEntry(e); render(); },

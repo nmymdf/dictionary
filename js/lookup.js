@@ -118,5 +118,25 @@
     return d && d.ipa ? (d.ipa.startsWith('/') || d.ipa.startsWith('[') ? d.ipa : '/' + d.ipa + '/') : '';
   }
 
-  window.Lookup = { word: lookupWord, sentence: translate, ipa: ipaOnly, translateMany };
+  // 中查英：英文翻譯 + 字典（每個英文字附反查的中文，方便挑對的字）
+  async function lookupZh(q) {
+    const url = GTX + '?' + new URLSearchParams({ client: 'gtx', sl: 'zh-TW', tl: 'en', hl: 'zh-TW', q }).toString() + '&dt=t&dt=bd';
+    let g;
+    try {
+      g = await getJSON(url);
+    } catch (err) {
+      const data = await getJSON('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q, langpair: 'zh-TW|en' }));
+      const t = data && data.responseData && data.responseData.translatedText;
+      if (!t) throw err;
+      return { en: t, groups: [] };
+    }
+    const en = (g[0] || []).map((seg) => seg[0] || '').join('').trim();
+    const groups = (g[1] || []).map((row) => ({
+      pos: POS[row[0]] || row[0] || '',
+      words: (row[2] || []).slice(0, 8).map((x) => ({ en: x[0], zh: (x[1] || []).slice(0, 4).join('、') })),
+    })).filter((gr) => gr.words.length);
+    return { en, groups };
+  }
+
+  window.Lookup = { word: lookupWord, sentence: translate, ipa: ipaOnly, translateMany, zh: lookupZh };
 })();

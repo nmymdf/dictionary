@@ -607,3 +607,15 @@ label.btn { cursor: pointer; align-self: flex-start; }
 .narrow .usage-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .narrow .senses li { gap: 6px; }
 .narrow .pos { min-width: 2em; }
+
+/* 中查英 */
+.zh-q { margin: 0; font-size: 1.8rem; font-weight: 700; }
+.zh-en-head { display: flex; align-items: flex-start; gap: 8px; }
+.zh-en-head .sent-en { flex: 1; min-width: 0; }
+.zh-row { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; border-top: 1px solid var(--line); }
+.zh-row:first-child { border-top: 0; }
+.zh-pick { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 12px 0; text-align: left; }
+.zh-pick b { font-family: var(--font-word); font-size: 1.15rem; font-weight: 600; color: var(--ink); }
+.zh-pick span { font-size: .85rem; color: var(--muted); }
+.narrow .row-sub { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.narrow .row-title { white-space: normal; overflow-wrap: anywhere; }
