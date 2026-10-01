@@ -29,7 +29,7 @@ App 裡：發音用手機的文字轉語音；匯出備份會存到「下載/單
 
 ### Windows
 
-- **安裝程式**：`desktop/` 是 Windows 版（Electron），用 `npm install && npx electron-builder --win nsis` 做出 `danciben-setup.exe`，裝好後桌面會有「單字本」。私人 repo `vocab-files` 的 GitHub Actions 會連同單字資料一起做好。
+- **Windows 版**：`desktop/` 是 Windows 版（Electron），用 `npm install && npx electron-builder --win zip` 做出 `danciben-windows.zip`（解壓縮就能用，第一次打開會在桌面放捷徑；不用安裝程式，比較不會被防毒誤判）。私人 repo `vocab-files` 的 GitHub Actions 會連同單字資料一起做好。
 - **或用 PWA**：在這個 repo 的 Settings → Pages 開啟 GitHub Pages，用 Chrome / Edge 開網址 → 網址列右邊的「安裝」。
 
 ## 開發

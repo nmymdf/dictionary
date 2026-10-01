@@ -109,12 +109,23 @@ async function runSelftest() {
   app.exit(0);
 }
 
+// 第一次打開時，在桌面放一個「單字本」捷徑（解壓縮版沒有安裝程式）
+function makeDesktopShortcut() {
+  if (SELFTEST || process.platform !== 'win32' || !app.isPackaged) return;
+  try {
+    const fs = require('fs');
+    const link = path.join(app.getPath('desktop'), '單字本.lnk');
+    const ok = fs.existsSync(link) && shell.readShortcutLink(link).target === process.execPath;
+    if (!ok) shell.writeShortcutLink(link, fs.existsSync(link) ? 'replace' : 'create', { target: process.execPath, description: '單字本', icon: process.execPath, iconIndex: 0 });
+  } catch (err) { /* 做不到也沒關係 */ }
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => { createWindow(); makeDesktopShortcut(); });
   app.on('window-all-closed', () => app.quit());
 }

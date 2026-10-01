@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis --publish never"
+    "dist": "electron-builder --win zip --publish never"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -17,20 +17,19 @@
     "appId": "tw.archiekuo.danciben",
     "productName": "Danciben",
     "copyright": "ArchieKUO",
-    "files": ["main.js", "preload.js", "www/**/*"],
-    "directories": { "output": "dist" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "www/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
     "win": {
-      "target": "nsis",
+      "target": "zip",
       "icon": "www/icons/icon-512.png"
     },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "單字本",
-      "artifactName": "danciben-setup.exe",
-      "deleteAppDataOnUninstall": false
-    }
+    "artifactName": "danciben-windows.zip",
+    "compression": "maximum"
   }
 }
