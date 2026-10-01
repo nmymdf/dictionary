@@ -26,7 +26,7 @@
 
 App 裡：發音用手機的文字轉語音；匯出備份會存到「下載/單字本」並開分享選單（Quick Share 到電腦）；在其他 App 選取英文 →「單字本」或「分享 → 單字本」可以直接查。
 
-每次推送程式碼，GitHub Actions（`.github/workflows/android.yml`）會自動編譯並發佈新版到 Releases。
+每次推送程式碼，GitHub Actions（`.github/workflows/app.yml`）會自動編譯 Android（`danciben.apk`）和 Windows（`danciben-windows.zip`，含自我測試），發佈到 Releases。這裡的版本不含單字資料，已經裝過的 App 更新後資料還在。
 
 ### Windows
 
