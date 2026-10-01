@@ -874,6 +874,60 @@ button.row-main { text-align: left; background: none; border: 0; padding: 12px 0
 .narrow .brand-meta { flex-direction: column; gap: 0; align-items: flex-start; }
 .narrow .syn { padding: 10px; }
 
+/* ==========================================================
+   v1.5：左邊細圖示列、查詢頁左右兩欄、字小一級、資料管理
+   ========================================================== */
+.wide .app { grid-template-columns: 84px minmax(0, 1fr); }
+.wide .sidenav { padding: 14px 8px; gap: 6px; align-items: stretch; }
+.wide .sidenav .brand { justify-content: center; padding: 2px 0 12px; }
+.wide .sidenav .brand-col { display: none; }
+.wide .sidenav a { flex-direction: column; justify-content: center; gap: 4px; padding: 10px 2px; font-size: .74rem; text-align: center; border-radius: 14px; }
+.wide .sidenav a .ic { width: 22px; height: 22px; }
+.wide .sidenav-foot { display: none; }
+.wide .brand-sm { visibility: visible; }
+.wide .toast { left: calc(50% + 42px); }
+.wide .topbar { height: 56px; }
+
+/* 查詢頁：左邊結果、右邊側欄 */
+.search-layout { display: flex; flex-direction: column; gap: 20px; }
+.s-main, .s-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.two-col .view { max-width: 1120px; }
+.two-col .topbar { padding-inline: max(24px, calc((100% - 1120px) / 2 + 20px)); }
+.two-col .search-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; align-items: start; gap: 24px; }
+.two-col .s-side { position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow: auto; padding-bottom: 8px; }
+.side-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 18px; background: var(--surface); box-shadow: var(--card-shadow); }
+.side-card h4 { margin: 0; font-size: .85rem; color: var(--muted); }
+.infl-list { margin: 0; font-family: var(--font-word); line-height: 1.7; }
+.s-side .syn { padding: 14px 16px; }
+.s-side .syn-l { font-size: .8rem; }
+.s-side .en-pick { font-size: .9rem; min-height: 28px; padding: 1px 10px; }
+.s-side .list .row-title { font-size: .98rem; }
+
+/* 字小一級 */
+.wd-head .headword { font-size: 2rem; }
+.wd-head { gap: 10px; padding: 16px 18px; }
+.gist li { font-size: 1rem; }
+.def-zh { font-size: 1rem; }
+.ex-en { font-size: .96rem; }
+.ex-zh { font-size: .88rem; }
+.sent-en { font-size: 1.1rem; }
+.sent-tr { font-size: 1.05rem; }
+.searchbar .search-box textarea { font-family: var(--font-ui); font-size: 1.05rem; line-height: 1.5; overflow: hidden; resize: none; max-height: 40vh; }
+.searchbar .search-box textarea:not(:placeholder-shown) { font-family: var(--font-word); }
+.rv-btn { min-height: 44px; font-size: .95rem; padding: 0 18px; }
+.narrow .wd-head .headword { font-size: 1.6rem; }
+
+/* 設定：資料 */
+.data-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.data-row:first-of-type { border-top: 0; }
+.data-row p { margin: 2px 0 0; }
+.data-row .btn { flex: none; }
+.danger-zone { margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--bad-weak); }
+.danger-zone > summary { cursor: pointer; color: var(--bad); font-weight: 700; }
+.danger-zone[open] { display: flex; flex-direction: column; gap: 8px; }
+.danger-zone input { min-height: 38px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.narrow .data-row { flex-direction: column; align-items: flex-start; }
+
 /* 放大很多倍時（可用寬度很窄）：精簡排版 */
 .narrow .view { padding-inline: 10px; gap: 16px; }
 .narrow .tabbar a .ic { padding: 2px 6px; }
@@ -966,3 +1020,31 @@ button.row-main { text-align: left; background: none; border: 0; padding: 12px 0
 .narrow .searchbar .search-box textarea::placeholder { font-size: .9rem; }
 .main { min-width: 0; }
 .brand .brand-meta { flex-direction: column; align-items: flex-start; gap: 3px; }
+.wide .sidenav .brand { display: none; }
+.wide .sidenav { padding-top: 18px; }
+.gist .pos { min-width: 2.2em; }
+.two-col .search-layout { grid-template-columns: minmax(0, 1fr) 270px; }
+.brand-meta, .brand-meta .author-inline, .brand-text { white-space: nowrap; }
+.slim .search-actions .btn.primary span { display: none; }
+.slim .search-actions .btn.primary { width: 46px; min-height: 46px; padding: 0; border-radius: 14px; }
+.slim .search-under .input-hint { display: none; }
+.slim .topbar, .slim.wide .topbar, .slim.two-col .topbar { padding-inline: 10px 12px; }
+.s-side .chips { gap: 6px; }
+.s-side .en-pick { margin: 0; }
+.seg button { white-space: nowrap; }
+.slim .brand-meta { flex-direction: column; align-items: flex-start; gap: 1px; }
+.slim .brand-meta .author-inline { font-size: .68rem; }
+.slim .brand-meta .ver { font-size: .6rem; padding: 0 4px; }
+.slim .topbar { gap: 4px; }
+.slim .brand-text { font-size: 1rem; }
+/* 視窗很窄時，左邊圖示列也縮窄 */
+.wide.narrow .app { grid-template-columns: 52px minmax(0, 1fr); }
+.wide.narrow .sidenav { padding: 12px 4px; }
+.wide.narrow .sidenav a { padding: 8px 0; font-size: .6rem; gap: 2px; }
+.wide.narrow .sidenav a .ic { width: 18px; height: 18px; }
+.wide.narrow .toast { left: calc(50% + 26px); }
+.narrow .brand-sm .brand-mark { display: none; }
+.narrow .brand-sm .brand-text { display: none; }
+.narrow .brand-sm .brand-meta { flex-direction: row; align-items: baseline; gap: 6px; }
+.topbar { min-width: 0; }
+.brand-sm { min-width: 0; overflow: hidden; }

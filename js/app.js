@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.5.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -344,7 +344,10 @@
   function markNarrow() {
     const w = window.innerWidth / (Number(S.settings.zoom) || 1);
     document.documentElement.classList.toggle('narrow', w < 360);
-    document.documentElement.classList.toggle('wide', w >= 680);
+    // 電腦版：左邊的圖示列一直都在；夠寬時查詢頁分成左右兩欄
+    document.documentElement.classList.toggle('wide', !!window.DesktopApp || w >= 680);
+    document.documentElement.classList.toggle('two-col', w >= 820);
+    document.documentElement.classList.toggle('slim', w < 560);
   }
   window.addEventListener('resize', markNarrow);
   function saveTheme() { try { localStorage.setItem('danciben-theme', S.settings.theme); localStorage.setItem('danciben-zoom', String(S.settings.zoom)); } catch (err) { /* 無法儲存沒關係 */ } }
@@ -657,9 +660,10 @@
     return {
       title: '查詢', tab: 'search', hideTitle: true,
       html: `
+      <div class="search-layout"><div class="s-main">
       <div class="searchbar">
-        <form class="search-box ${isSent ? 'tall' : ''} ${S.draft ? 'has-text' : ''}" id="search-form">
-          <textarea id="q" rows="${isSent ? 3 : 1}" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false" enterkeyhint="search"
+        <form class="search-box ${S.draft ? 'has-text' : ''}" id="search-form">
+          <textarea id="q" rows="1" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false" enterkeyhint="search"
             placeholder="${isSent ? '貼上英文或中文句子' : '英文／中文／整句'}">${esc(S.draft)}</textarea>
           <div class="search-actions">
             <button type="button" class="icon-btn ghost" data-act="clear" aria-label="清除">${ic('x')}</button>
@@ -682,14 +686,21 @@
         <p class="note">到「更多 → 匯出 / 匯入 JSON」選 <b>danciben-import.json</b>,47 個 Word 檔整理好的單字就會進來。</p>
         <a class="btn primary" href="#/backup">去匯入</a>
       </section>` : ''}
-      <section class="block">
+      </div><aside class="s-side">
+      ${curSide()}
+      <section class="block side-recent">
         <div class="block-head"><h3>最近查過</h3>${S.recent.length ? '<button class="link small" data-act="clear-recent">清除</button>' : ''}</div>
         ${S.recent.length ? `<ul class="list recent">${S.recent.map(recentRow).join('')}</ul>` : '<p class="muted small empty-hint">最近查過的 20 個字和句子會列在這裡。<br>想留下來複習，在查詢結果按「加入複習」，會存到「新查的」。</p>'}
-      </section>`,
+      </section>
+      </aside></div>`,
       after() {
         const ta = document.getElementById('q');
         const sug = document.getElementById('suggest');
+        // 輸入框依內容自動變高，不出現捲軸
+        const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+        fit();
         ta.addEventListener('input', () => {
+          fit();
           S.draft = ta.value;
           ta.closest('form').classList.toggle('has-text', !!ta.value);
           sug.innerHTML = suggestHtml(ta.value);
@@ -748,17 +759,29 @@
         ${en.posName || en.pos ? `<header class="pos-h"><span class="pos-name">${esc(en.posName || en.pos)}</span>${en.pos && en.posName !== en.pos ? `<span class="pos-en" lang="en">${esc(en.pos)}</span>` : ''}</header>` : ''}
         <ol class="defs">${en.senses.map((x, i) => senseHtml(x, i, word, zhq)).join('')}</ol>
       </article>`).join('');
-    const syn = d.syn.length ? `<section class="syn">
+    return `<section class="dict">
+      <div class="dict-head"><h3>詳細解釋</h3><span class="muted small">${esc(d.dict || 'Yahoo 字典')}${ms ? ` · ${(ms / 1000).toFixed(1)} 秒` : ''}</span></div>
+      ${blocks}
+    </section>`;
+  }
+  // 側欄：字的變化、同義詞、反義詞（寬螢幕放右邊，窄的時候放在結果下面）
+  function sideHtml(d) {
+    if (!d) return '';
+    const infl = d.infl.length ? `<section class="side-card"><h4>字的變化</h4><p class="infl-list" lang="en">${d.infl.map(esc).join('<br>')}</p></section>` : '';
+    const syn = d.syn.length ? `<section class="syn side-card">
         <h4>同義詞・反義詞</h4>
         ${d.syn.slice(0, 6).map((s) => `<div class="syn-row"><span class="syn-k ${s.kind === '反義詞' ? 'anti' : ''}">${s.kind === '反義詞' ? '反' : '同'}</span>
           <div class="syn-body">${s.label ? `<span class="syn-l">${esc(s.label)}</span>` : ''}<div class="chips">${s.words.map((w) => `<button class="en-pick" data-act="query" data-text="${esc(w)}" data-mode="word" lang="en">${esc(w)}</button>`).join('')}</div></div></div>`).join('')}
       </section>` : '';
-    return `<section class="dict">
-      <div class="dict-head"><h3>詳細解釋</h3><span class="muted small">${esc(d.dict || 'Yahoo 字典')}${ms ? ` · ${(ms / 1000).toFixed(1)} 秒` : ''}</span></div>
-      ${d.infl.length ? `<p class="infl-line"><span class="infl-l">變化</span><span lang="en">${d.infl.map(esc).join('<br>')}</span></p>` : ''}
-      ${blocks}
-      ${syn}
-    </section>`;
+    return infl + syn;
+  }
+  function curSide() {
+    const cur = S.cur;
+    if (!cur || cur.kind !== 'w') return '';
+    const key = wordKey(cur.q);
+    const st = S.dict[key];
+    const e = byId(key);
+    return sideHtml(st && st.status === 'ok' ? st.data : (e && e.dict && e.dict.gist ? e.dict : null));
   }
 
   function noteCard(e) {
@@ -845,7 +868,8 @@
 
   // 從單字庫打開的單字／句子頁（有返回鍵）
   function viewWord(word) {
-    return { title: '單字', tab: 'library', back: '#/library', html: wordResultHtml(word) };
+    const d = (S.dict[wordKey(word)] || {}).data;
+    return { title: '單字', tab: 'library', back: '#/library', html: wordResultHtml(word) + sideHtml(d && d.gist ? d : null) };
   }
   function viewSent(text) {
     return { title: '句子', tab: 'library', back: '#/library', html: sentResultHtml(text) };
@@ -1831,9 +1855,17 @@
       </section>
       <section class="block panel"><h3>資料</h3>
         <div class="set-row"><span>已使用空間</span><span class="muted tnum" id="usage-v">計算中…</span></div>
-        <button class="btn ghost" data-act="clear-history">${c === 'clear-history' ? '再按一次確定清除' : '清除查詢紀錄'}</button>
-        <button class="btn ghost danger" data-act="clear-all">${c === 'clear-all' ? '再按一次：全部刪除（無法復原）' : '清除全部資料'}</button>
-        <p class="muted small">清除前建議先匯出 JSON 備份。</p>
+        <div class="data-row"><div><b>清除最近查過</b><p class="muted small">只刪首頁那 20 個紀錄，其他都不動。</p></div>
+          <button class="btn ghost small" data-act="clear-recent">清除</button></div>
+        <div class="data-row"><div><b>刪除全部新查的</b><p class="muted small">刪掉「新查的」裡的 ${S.entries.filter((e) => e.src === 'new').length} 筆字和句子，47 個檔不動。可以復原。</p></div>
+          <button class="btn ghost small" data-act="del-all-new">刪除</button></div>
+        <div class="data-row"><div><b>重設 47 個檔的複習進度</b><p class="muted small">單字都還在，只是複習進度歸零，從頭開始排。</p></div>
+          <button class="btn ghost small" data-act="reset-progress">${c === 'reset-progress' ? '再按一次確定' : '重設'}</button></div>
+        <details class="danger-zone"><summary>全部刪光（危險）</summary>
+          <p class="muted small">會刪掉所有資料：47 個檔、新查的、複習進度。下次打開會重新匯入 47 個檔，但新查的和進度都救不回來。建議先「匯出 JSON」備份。</p>
+          <label class="set-row"><span>要確定，請在格子裡打「全部刪除」</span><input id="wipe-confirm" type="text" autocomplete="off"></label>
+          <button class="btn ghost danger" data-act="clear-all">全部刪光</button>
+        </details>
       </section>
       <p class="muted small center">單字本 1.0</p>
       <p class="muted small center">單字本 版本 ${APP_VERSION}（${APP_DATE}）</p>`,
@@ -2003,8 +2035,23 @@
       if (S.confirm !== 'clear-history') { S.confirm = 'clear-history'; render(); return; }
       S.recent = []; saveRecent(); S.confirm = ''; toast('已清除最近查過'); render();
     },
+    'del-all-new': () => {
+      const list = S.entries.filter((e) => e.src === 'new');
+      if (!list.length) { toast('「新查的」裡沒有東西'); return; }
+      list.forEach(removeEntry);
+      render();
+      toastAction(`已刪除 ${list.length} 筆新查的`, '復原', () => { list.forEach((e) => { addEntry(e); saveEntry(e); }); render(); });
+    },
+    'reset-progress': () => {
+      if (S.confirm !== 'reset-progress') { S.confirm = 'reset-progress'; render(); return; }
+      const list = S.entries.filter((e) => e.src === 'import');
+      list.forEach((e) => { e.review = { ...newReview(), status: e.starred ? 'new' : 'none', due: e.starred ? Date.now() : null }; });
+      saveEntries(list);
+      S.confirm = ''; toast('已重設 47 個檔的複習進度'); render();
+    },
     'clear-all': async () => {
-      if (S.confirm !== 'clear-all') { S.confirm = 'clear-all'; render(); return; }
+      const v = (document.getElementById('wipe-confirm') || {}).value || '';
+      if (v.trim() !== '全部刪除') { toast('請先在格子裡打「全部刪除」'); return; }
       await Promise.all([DB.clear('entries'), DB.clear('groups'), DB.clear('meta')]);
       S.entries = []; S.index = new Map(); S.groups = {}; S.recent = []; S.log = {}; S.confirm = '';
       toast('已清除全部資料'); go('search');
