@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.5.1';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -184,7 +184,8 @@
     return `<span class="pill ${cls}">${e.review.suspended ? '已暫停' : label}</span>`;
   };
   const USAGE = { daily: ['生活', 'u-daily'], formal: ['正式', 'u-formal'], rare: ['很少用', 'u-rare'] };
-  const usageChip = (u) => (u && USAGE[u] ? `<span class="uchip ${USAGE[u][1]}">${USAGE[u][0]}</span>` : '');
+  // 「生活／正式／很少用」是當初主觀判斷的，已經不顯示（資料保留）
+  const usageChip = () => '';
   function usagePicker(e) {
     return `<div class="usage-pick" role="group" aria-label="用法">${Object.entries(USAGE).map(([k, [t, c]]) =>
       `<button class="uchip ${c} ${e.usage === k ? 'on' : 'off'}" data-act="set-usage" data-id="${esc(e.id)}" data-u="${k}" aria-pressed="${e.usage === k}">${t}</button>`).join('')}</div>`;
@@ -649,7 +650,7 @@
         <span class="row-title ${kind === 's' ? 'is-sent' : ''}" ${hasZh(r.q) ? '' : 'lang="en"'}>${esc(r.q)}</span>
         <span class="row-sub">${e && e.starred ? '<span class="in-rv">複習中</span>' : ''}${esc(r.zh)}</span>
       </button>
-      <div class="row-meta"><span class="muted small">${rel(r.at)}</span></div></li>`;
+</li>`;
   }
 
   function viewSearch() {
@@ -926,7 +927,6 @@
       sentence: real.filter((e) => e.type === 'sentence').length,
     };
     let list = real.filter((e) => (L.filter === 'all') || (L.filter === 'star' && e.starred) || (L.filter === e.type));
-    if (L.usage !== 'all' && !isNewTab) list = list.filter((e) => e.usage === L.usage);
     if (L.tag && !isNewTab) list = list.filter((e) => e.tags.includes(L.tag));
     if (L.q) {
       const q = L.q.toLowerCase().trim();
@@ -954,9 +954,6 @@
       <div class="lib-tools">
         <label class="lib-search">${ic('search')}<input id="lib-q" type="search" placeholder="搜尋英文或中文" value="${esc(L.q)}"></label>
         <div class="fchips">${f('all', '全部')}${isNewTab ? '' : f('star', '複習中')}${f('word', '單字')}${f('sentence', '句子')}</div>
-        ${isNewTab ? '' : `<div class="filter-row">
-          <div class="fchips usage-filter">${[['all', '全部用法'], ['daily', '生活'], ['formal', '正式'], ['rare', '很少用']].map(([k, t]) => `<button class="fchip small ${L.usage === k ? 'on' : ''}" data-act="lib-usage" data-u="${k}">${t}</button>`).join('')}</div>
-        </div>`}
         <div class="filter-row">
           ${isNewTab ? '' : `<label class="sort">檔案
             <select id="lib-tag"><option value="">全部</option>${allTags().map((t) => `<option value="${esc(t)}" ${L.tag === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
@@ -1022,7 +1019,6 @@
         <div class="wd-tags">${srcTag(e)}</div>
         <div class="hw-line"><h2 class="headword ${e.type === 'sentence' ? 'sent-head' : ''}" lang="en">${esc(e.type === 'word' ? e.text : '句子')}</h2>${speakBtn(e.text)}</div>
         ${e.ipa && e.type === 'word' ? `<div class="ipa-line"><span class="ipa">${esc(e.ipa)}</span></div>` : ''}
-        ${e.type === 'word' ? `<div class="usage-row"><span class="muted small">用法</span>${usagePicker(e)}</div>` : ''}
         ${reviewBtn(e.type === 'word' ? e.id : sentKey(e.text), e)}
       </header>
       ${stats}
@@ -1113,7 +1109,7 @@
   const isNew = (e) => inReview(e) && !e.review.reps;
   const isDue = (e) => inReview(e) && e.review.reps > 0 && e.review.due <= endOfToday();
   const isLeech = (e) => inReview(e) && (e.review.lapses || 0) + Math.max(0, (e.review.wrong || 0) - 1) >= LEECH;
-  const notRare = (e) => !(S.settings.skipRare && e.usage === 'rare');
+  const notRare = () => true;
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
   function rollDaily() {
@@ -1257,7 +1253,6 @@
       <div class="scope-row"><span class="muted small">每天複習的範圍</span>
         <div class="seg small-seg">${[['all', '全部'], ['old', '47 個檔'], ['new', '新查的']].map(([k, t]) => `<button class="${S.settings.reviewScope === k ? 'on' : ''}" data-act="rv-scope" data-s="${k}">${t}</button>`).join('')}</div>
       </div>
-      <label class="check skip-rare"><input type="checkbox" id="rv-skip" ${S.settings.skipRare ? 'checked' : ''}> 略過標成 ${usageChip('rare')} 的字</label>
       ${leeches.length ? `<section class="block leech">
         <div class="block-head"><h3>頑固字 · 常忘記的 ${leeches.length} 個</h3><button class="link" data-act="rv-leech">專門練 ${ic('chev')}</button></div>
         <div class="chips">${leeches.slice(0, 12).map((e) => `<a class="chip-link" href="#/entry/${encodeURIComponent(e.id)}"><b lang="en">${esc(e.text)}</b> 忘了 ${Math.max(e.review.lapses || 0, e.review.wrong || 0)} 次</a>`).join('')}</div>
@@ -1297,7 +1292,6 @@
         <p class="muted small">自訂複習一樣會更新下次複習的時間。</p>
       </details>`,
       after() {
-        document.getElementById('rv-skip').addEventListener('change', (ev) => { S.settings.skipRare = ev.target.checked; saveSettings(); render(); });
         document.querySelector('details.custom').addEventListener('toggle', (ev) => { R.open = ev.target.open; });
         const tg = document.getElementById('rv-tag');
         if (tg) { if (!R.tag) R.tag = tg.value; tg.addEventListener('change', () => { R.tag = tg.value; render(); }); }
