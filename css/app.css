@@ -1048,3 +1048,5 @@ button.row-main { text-align: left; background: none; border: 0; padding: 12px 0
 .narrow .brand-sm .brand-meta { flex-direction: row; align-items: baseline; gap: 6px; }
 .topbar { min-width: 0; }
 .brand-sm { min-width: 0; overflow: hidden; }
+.card-ex { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; }
+.card-ex + .card-ex { border-top: 1px dashed var(--line); margin-top: 4px; padding-top: 8px; }

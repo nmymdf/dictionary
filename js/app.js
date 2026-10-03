@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.5.1';
+  const APP_VERSION = '1.5.2';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1331,12 +1331,40 @@
     const re = wordRe(e.text);
     return esc(it.ex.en).replace(new RegExp(re.source, 'i'), (m) => (picked ? `<mark>${m}</mark>` : '<span class="blank">＿＿＿＿</span>'));
   }
+  // 複習翻面：兩句最短的例句（有中文翻譯的優先）
+  function shortExamples(e, n = 2) {
+    const sorted = e.examples.filter((x) => x.en).slice().sort((a, b) => (b.zh ? 1 : 0) - (a.zh ? 1 : 0) || a.en.length - b.en.length);
+    // 幾乎一樣的句子（只差單複數、標點）或中文一樣的，只留一句
+    const key = (x) => x.en.toLowerCase().replace(/[^a-z ]/g, '').replace(/s\b/g, '').replace(/\s+/g, ' ').trim();
+    const out = [];
+    sorted.forEach((x) => { if (out.length < n && !out.some((o) => key(o) === key(x) || (o.zh && o.zh === x.zh))) out.push(x); });
+    return out;
+  }
+  // 例句不到兩句的字，從 Yahoo 字典補一句短的，存起來（只試一次）
+  function ensureExamples(e) {
+    if (e.type !== 'word' || shortExamples(e).length >= 2 || e.exTried || !(window.Yahoo && Yahoo.canFetch())) return;
+    e.exTried = true;
+    Yahoo.lookup(e.text).then((d) => {
+      if (!d) return;
+      const have = new Set(e.examples.map((x) => x.en.toLowerCase()));
+      const more = [];
+      d.entries.forEach((en) => en.senses.forEach((x) => x.examples.forEach((ex) => {
+        if (ex.en && ex.zh && !have.has(ex.en.toLowerCase()) && hasWord(ex.en, e.text)) more.push(ex);
+      })));
+      more.sort((a, b) => a.en.length - b.en.length);
+      e.examples.push(...more.slice(0, Math.max(0, 2 - shortExamples(e).length)));
+      saveEntry(e);
+      const s = S.session;
+      if (location.hash === '#/review/quiz' && s && s.items[s.i] && s.items[s.i].id === e.id) render();
+    }).catch(() => { saveEntry(e); });
+  }
   const cardBack = (e) => (e.type === 'word'
-    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${e.examples[0] ? `<div class="ex-en small" lang="en">${highlight(e.examples[0].en, e.text)}</div><div class="ex-zh">${esc(e.examples[0].zh)}</div>` : ''}`
+    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x) => `<div class="card-ex"><div class="ex-en small" lang="en">${highlight(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
     : `<p class="sent-zh">${esc(e.zh)}</p>`) + (e.src === 'new' && e.notes.length ? `<p class="rv-notes">${ic('pen')} ${esc(e.notes.join('；'))}</p>` : '');
 
   const RENDER = {
     flash(s, it, e) {
+      ensureExamples(e);
       return `
       <div class="flash ${s.flipped ? 'flipped' : ''}" data-act="flip" role="button" tabindex="0" aria-label="翻面">
         <span class="flash-front">
