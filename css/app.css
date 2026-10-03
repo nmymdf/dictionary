@@ -1072,3 +1072,20 @@ body.focus-mode .grade.four, .narrow body.focus-mode .grade.four { grid-template
 body.focus-mode .grade.four .btn, .narrow body.focus-mode .grade.four .btn { min-height: 52px; padding: 4px 2px; flex-direction: column; gap: 0; font-size: .92rem; white-space: nowrap; }
 body.focus-mode .grade.four small, .narrow body.focus-mode .grade.four small { font-size: .66rem; }
 body.focus-mode .progress { gap: 8px; }
+
+/* v1.5.4：手機複習，底部按鈕固定不動；「顯示答案」和四個按鈕同樣大小 */
+body.focus-mode .card-ex .ex-en { font-size: 1.04rem; line-height: 1.45; }
+body.focus-mode .card-ex .ex-zh { font-size: .92rem; }
+html:not(.wide) body.focus-mode .view { padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+html:not(.wide) body.focus-mode .progress { position: sticky; top: 48px; z-index: 4; background: var(--bg); padding-block: 6px; margin-block: -6px 0; }
+html:not(.wide) body.focus-mode .grade,
+html:not(.wide) body.focus-mode .start-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 12;
+  margin: 0; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 -8px 20px rgb(0 0 0 / .14);
+}
+html:not(.wide) body.focus-mode .grade .btn { height: 62px; min-height: 62px; }
+html:not(.wide) body.focus-mode .grade.placeholder .btn { width: 100%; font-size: 1.1rem; border-radius: 14px; }
+html:not(.wide) body.focus-mode .start-bar .btn { min-height: 52px; }
