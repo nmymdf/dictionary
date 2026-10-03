@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.5.2';
+  const APP_VERSION = '1.5.3';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1121,9 +1121,9 @@
     const due = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e)).sort((a, b) => a.review.due - b.review.due);
     const newLeft = Math.max(0, Number(S.settings.newPerDay) - S.daily.newDone);
     // 新查的字優先（剛查過最容易記），再來才是 47 個檔的新字
-    const fresh = S.entries.filter((e) => isNew(e) && notRare(e) && inScope(e))
-      .sort((a, b) => (a.src === 'new' ? 0 : 1) - (b.src === 'new' ? 0 : 1) || (a.src === 'new' ? a.added - b.added : a.order - b.order))
-      .slice(0, newLeft);
+    // 新字：新查的優先，47 個檔的新字隨機挑（每次不會都從同一個字開始）
+    const pool = S.entries.filter((e) => isNew(e) && notRare(e) && inScope(e));
+    const fresh = [...shuffle(pool.filter((e) => e.src === 'new')), ...shuffle(pool.filter((e) => e.src !== 'new'))].slice(0, newLeft);
     return { due, fresh, newLeft, list: [...due, ...fresh] };
   }
 
@@ -1186,7 +1186,7 @@
     if (mode === 'mix') {
       // 新字留在後段，先清到期的；同組的字不要連在一起
       const due = shuffle(S.session.items.filter((x) => byId(x.id).review.reps));
-      const fresh = S.session.items.filter((x) => !byId(x.id).review.reps);
+      const fresh = shuffle(S.session.items.filter((x) => !byId(x.id).review.reps));
       S.session.items = [...due, ...fresh];
     } else S.session.items = shuffle(S.session.items);
     go('review/quiz');
@@ -1370,13 +1370,12 @@
         <span class="flash-front">
           ${kindLabel(it)}
           <span class="${e.type === 'word' ? 'headword' : 'flash-sent'}" lang="en">${esc(e.text)}</span>
-          ${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}
-          ${usageChip(e.usage)}
+          <span class="ipa-row">${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${speakBtn(e.text, '播放發音', 'card-speak')}</span>
           ${!s.flipped ? `<span class="muted small flip-hint">先想${e.type === 'word' ? '中文意思' : '整句的意思'}，再點一下翻面</span>` : ''}
         </span>
         ${s.flipped ? `<span class="flash-back">${cardBack(e)}</span>` : ''}
       </div>
-      <div class="center-row">${speakBtn(e.text)}</div>${gradeBar(s, e)}`;
+      ${gradeBar(s, e)}`;
     },
     reverse(s, it, e) {
       return `

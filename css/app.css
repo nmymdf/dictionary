@@ -1050,3 +1050,25 @@ button.row-main { text-align: left; background: none; border: 0; padding: 12px 0
 .brand-sm { min-width: 0; overflow: hidden; }
 .card-ex { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; }
 .card-ex + .card-ex { border-top: 1px dashed var(--line); margin-top: 4px; padding-top: 8px; }
+
+/* v1.5.3：複習一個畫面看完（手機），四個按鈕一列 */
+.ipa-row { display: inline-flex; align-items: center; gap: 6px; }
+.card-speak { width: 34px; height: 34px; }
+html:not(.wide) body.focus-mode .view { zoom: .82; padding-block: 2px 8px; gap: 10px; }
+html:not(.wide) body.focus-mode .topbar { height: 48px; }
+body.focus-mode .flash { min-height: 0; padding: 14px 12px 12px; gap: 8px; }
+body.focus-mode .flash .headword { font-size: 1.8rem; }
+body.focus-mode .flash.flipped .headword { font-size: 1.45rem; }
+body.focus-mode .flash-front { gap: 4px; }
+body.focus-mode .flash-back { gap: 4px; padding-top: 8px; }
+body.focus-mode .flash-back .senses li { font-size: .95rem; }
+body.focus-mode .card-ex .ex-en { font-size: .9rem; line-height: 1.4; }
+body.focus-mode .card-ex .ex-zh { font-size: .8rem; }
+body.focus-mode .card-ex { padding-top: 4px; }
+body.focus-mode .card-ex + .card-ex { margin-top: 2px; padding-top: 5px; }
+body.focus-mode .infl { font-size: .85rem; margin: 0; }
+body.focus-mode .q-label { margin: 0; }
+body.focus-mode .grade.four, .narrow body.focus-mode .grade.four { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+body.focus-mode .grade.four .btn, .narrow body.focus-mode .grade.four .btn { min-height: 52px; padding: 4px 2px; flex-direction: column; gap: 0; font-size: .92rem; white-space: nowrap; }
+body.focus-mode .grade.four small, .narrow body.focus-mode .grade.four small { font-size: .66rem; }
+body.focus-mode .progress { gap: 8px; }
