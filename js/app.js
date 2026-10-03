@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.5.5';
+  const APP_VERSION = '1.6.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1112,12 +1112,19 @@
   const notRare = () => true;
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
-  // 47 個檔的字以前讀過，第一次按「記得」隔 7 天、「簡單」隔 3 週，不用從頭開始
-  const FIRST_OLD = { 3: 7, 4: 21 };
-  function scheduleFor(e, g) {
-    const ret = Number(S.settings.retention);
-    const out = SRS.schedule(e.review, g, ret);
-    if (e.src === 'import' && !e.review.reps && FIRST_OLD[g] && out.days < FIRST_OLD[g]) return SRS.withFirstInterval(out, FIRST_OLD[g], ret);
+  /* 複習排程：階梯式（7 → 15 → 30 → 60 → 90 天，最長 90 天）
+     忘了：明天再出現、退回第一階；困難：3 天、階數不變；記得：往上一階；簡單：往上兩階 */
+  const STEPS = [7, 15, 30, 60, 90];
+  const stepOf = (rv) => (Number.isInteger(rv.step) ? rv.step : -1);
+  function scheduleFor(e, g, now = Date.now()) {
+    const rv = e.review;
+    let step = stepOf(rv);
+    let days;
+    if (g === 1) { step = -1; days = 1; }
+    else if (g === 2) { days = 3; }
+    else { step = Math.min(STEPS.length - 1, step + (g === 4 ? 2 : 1)); days = STEPS[step]; }
+    const out = { ...rv, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
+    if (g === 1) { out.wrong = (rv.wrong || 0) + 1; if (rv.reps) out.lapses = (rv.lapses || 0) + 1; } else out.right = (rv.right || 0) + 1;
     return out;
   }
   const previewFor = (e) => [1, 2, 3, 4].map((g) => scheduleFor(e, g).days);
@@ -1495,7 +1502,7 @@
         ${ok < firsts.length ? '<button class="btn primary" data-act="rv-retry">把沒記住的再練一次</button>' : ''}
         <a class="btn ghost" href="#/review">回複習首頁</a>
       </div>
-      <p class="muted small">排程用 FSRS(Anki 使用的演算法）：記得的字間隔會越拉越長，忘了的字明天再出現。</p>`,
+      <p class="muted small">複習間隔一階一階往上：7 → 15 → 30 → 60 → 90 天（最長 90 天）。忘了的字明天再出現。</p>`,
     };
   }
 
@@ -1717,7 +1724,7 @@
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
-        <p>用 FSRS 演算法（Anki 目前用的）：每個字依你記得的程度，算出下次最適合複習的日子。評「記得」間隔會拉長，「忘了」明天再出現。</p>
+        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「困難」3 天後再考；按「忘了」明天再出現，並且從第一階重新開始。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型會自動從「認得」進到「會用」：閃卡 → 例句挖空、易混淆辨析 → 反向閃卡、拼字、聽力。</p>
         <p>複習頁可以選每天複習的範圍：全部、只練 47 個檔、只練新查的。每張卡片角落都有標籤，看得出是哪一種。</p>
@@ -1878,7 +1885,7 @@
       <section class="block panel"><h3>複習</h3>
         <label class="set-row"><span>每天新字上限</span>${sel('set-new', 'newPerDay', [[0, '0（先不加新字）'], [5, '5'], [10, '10'], [15, '15'], [20, '20'], [30, '30'], [50, '50']])}</label>
         <label class="set-row"><span>自訂複習題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
-        <label class="set-row"><span>目標記憶率</span>${sel('set-ret', 'retention', [[0.85, '85%（建議，複習少一點）'], [0.9, '90%'], [0.95, '95%（複習多一點）']])}</label>
+        <label class="set-row" hidden><span>目標記憶率</span>${sel('set-ret', 'retention', [[0.85, '85%（建議，複習少一點）'], [0.9, '90%'], [0.95, '95%（複習多一點）']])}</label>
       </section>
       <section class="block panel"><h3>外觀</h3>
         <label class="set-row"><span>主題</span>${sel('set-theme', 'theme', [['light', '白底'], ['dark', '黑底'], ['system', '跟隨系統']])}</label>
@@ -2136,6 +2143,24 @@
       if (settings) S.settings = { ...DEFAULT_SETTINGS, ...settings };
       // 電腦版預設小一號（從兩倍改成特大），只調整一次
       // 記憶目標改成 85%（複習次數少很多），只調整一次
+      // 改成階梯式排程：已經評過的字換算成對應的階，下次複習最晚不超過 90 天
+      if (!S.settings.ladderV16) {
+        const fix = [];
+        S.entries.forEach((e) => {
+          const r = e.review;
+          if (!r.reps || !r.last || !r.due) return;
+          const iv = Math.round((r.due - r.last) / DAYMS);
+          let st = -1;
+          STEPS.forEach((d, i) => { if (iv >= d) st = i; });
+          r.step = st;
+          r.due = r.last + Math.min(iv, STEPS[STEPS.length - 1]) * DAYMS;
+          r.s = Math.min(iv, STEPS[STEPS.length - 1]);
+          fix.push(e);
+        });
+        if (fix.length) saveEntries(fix);
+        S.settings.ladderV16 = true;
+        DB.setMeta('settings', S.settings).catch(dbFail);
+      }
       if (!S.settings.retV155) {
         if (Number(S.settings.retention) === 0.9) S.settings.retention = 0.85;
         S.settings.retV155 = true;
