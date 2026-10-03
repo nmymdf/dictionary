@@ -5,12 +5,12 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.5.4';
+  const APP_VERSION = '1.5.5';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
     accent: 'en-US', rate: 1, voice: '', autoSpeak: false,
-    defaultMode: 'word', newPerDay: 20, perSession: 20, retention: 0.9,
+    defaultMode: 'word', newPerDay: 20, perSession: 20, retention: 0.85,
     fontSize: 'normal', zoom: window.DesktopApp ? 1.75 : 2, theme: 'light', skipRare: false,
     voiceMode: 'natural',  // natural：線上自然語音；system：系統語音
     reviewScope: 'all',    // all / old（47 個檔）/ new（新查的）
@@ -1112,6 +1112,16 @@
   const notRare = () => true;
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
+  // 47 個檔的字以前讀過，第一次按「記得」隔 7 天、「簡單」隔 3 週，不用從頭開始
+  const FIRST_OLD = { 3: 7, 4: 21 };
+  function scheduleFor(e, g) {
+    const ret = Number(S.settings.retention);
+    const out = SRS.schedule(e.review, g, ret);
+    if (e.src === 'import' && !e.review.reps && FIRST_OLD[g] && out.days < FIRST_OLD[g]) return SRS.withFirstInterval(out, FIRST_OLD[g], ret);
+    return out;
+  }
+  const previewFor = (e) => [1, 2, 3, 4].map((g) => scheduleFor(e, g).days);
+
   function rollDaily() {
     if (S.daily.date !== today()) { S.daily = { date: today(), newDone: 0 }; DB.setMeta('daily', S.daily).catch(dbFail); }
   }
@@ -1323,7 +1333,7 @@
   function gradeBar(s, e) {
     if (!s.flipped) return '<div class="grade placeholder"><button class="btn primary wide" data-act="flip">顯示答案</button></div>';
     const it = s.items[s.i];
-    const days = it.again ? null : SRS.preview(e.review, Number(S.settings.retention));
+    const days = it.again ? null : previewFor(e);
     return `<div class="grade four">${GRADES.map(([t, c], g) => `<button class="btn ${c}" data-act="grade" data-g="${g + 1}"><span>${t}</span>${days ? `<small>${g === 0 ? '再考一次' : SRS.fmtDays(days[g])}</small>` : ''}</button>`).join('')}</div>`;
   }
   function blanked(it, e, picked) {
@@ -1496,7 +1506,7 @@
     it.result = g;
     if (it.again) return;
     const wasNew = !e.review.reps;
-    e.review = SRS.schedule(e.review, g, Number(S.settings.retention));
+    e.review = scheduleFor(e, g);
     it.next = g === 1 ? '明天' : SRS.fmtDays(e.review.days) + '後';
     if (wasNew) { rollDaily(); S.daily.newDone++; DB.setMeta('daily', S.daily).catch(dbFail); }
     S.log[today()] = (S.log[today()] || 0) + 1;
@@ -1868,7 +1878,7 @@
       <section class="block panel"><h3>複習</h3>
         <label class="set-row"><span>每天新字上限</span>${sel('set-new', 'newPerDay', [[0, '0（先不加新字）'], [5, '5'], [10, '10'], [15, '15'], [20, '20'], [30, '30'], [50, '50']])}</label>
         <label class="set-row"><span>自訂複習題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
-        <label class="set-row"><span>目標記憶率</span>${sel('set-ret', 'retention', [[0.85, '85%（複習少一點）'], [0.9, '90%（建議）'], [0.95, '95%（複習多一點）']])}</label>
+        <label class="set-row"><span>目標記憶率</span>${sel('set-ret', 'retention', [[0.85, '85%（建議，複習少一點）'], [0.9, '90%'], [0.95, '95%（複習多一點）']])}</label>
       </section>
       <section class="block panel"><h3>外觀</h3>
         <label class="set-row"><span>主題</span>${sel('set-theme', 'theme', [['light', '白底'], ['dark', '黑底'], ['system', '跟隨系統']])}</label>
@@ -2125,6 +2135,12 @@
       groups.forEach((g) => { S.groups[g.id] = g; });
       if (settings) S.settings = { ...DEFAULT_SETTINGS, ...settings };
       // 電腦版預設小一號（從兩倍改成特大），只調整一次
+      // 記憶目標改成 85%（複習次數少很多），只調整一次
+      if (!S.settings.retV155) {
+        if (Number(S.settings.retention) === 0.9) S.settings.retention = 0.85;
+        S.settings.retV155 = true;
+        DB.setMeta('settings', S.settings).catch(dbFail);
+      }
       if (IS_DESKTOP && !S.settings.zoomV14) {
         if (Number(S.settings.zoom) === 2) S.settings.zoom = 1.75;
         S.settings.zoomV14 = true;

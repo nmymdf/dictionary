@@ -64,7 +64,12 @@
   function preview(rv, retention) {
     return [1, 2, 3, 4].map((g) => schedule(rv, g, retention).days);
   }
+  // 讓「下次間隔 = days 天」需要的穩定度（用來指定第一次的間隔）
+  function withFirstInterval(out, days, retention, now = Date.now()) {
+    const s = days * FACTOR / (Math.pow(retention, 1 / DECAY) - 1);
+    return { ...out, s: Math.max(out.s, s), days, due: now + days * DAY };
+  }
   const fmtDays = (d) => (d < 30 ? `${d} 天` : d < 365 ? `${Math.round(d / 30)} 個月` : `${(d / 365).toFixed(1)} 年`);
 
-  window.SRS = { schedule, preview, fmtDays, retrievability };
+  window.SRS = { schedule, preview, fmtDays, retrievability, withFirstInterval };
 })();
