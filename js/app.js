@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.7.0';
+  const APP_VERSION = '1.7.1';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1126,7 +1126,7 @@
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
   /* 複習排程：階梯式（7 → 15 → 30 → 60 → 90 天，最長 90 天）
-     不熟：3 天、退回第一階；記得：往上一階；簡單：往上兩階；很熟：直接 60 天，之後 90 天 */
+     不熟：3 天、退回第一階；記得：往上一階；簡單：往上兩階；很熟：直接 30 天，之後再往上 */
   const STEPS = [7, 15, 30, 60, 90];
   const stepOf = (rv) => (Number.isInteger(rv.step) ? rv.step : -1);
   function scheduleFor(e, g, now = Date.now()) {
@@ -1135,7 +1135,7 @@
     let days;
     const top = STEPS.length - 1;
     if (g === 1) { step = -1; days = 3; }
-    else if (g === 4) { step = step < 3 ? 3 : top; days = STEPS[step]; }
+    else if (g === 4) { step = step < 2 ? 2 : Math.min(top, step + 1); days = STEPS[step]; }
     else { step = Math.min(top, step + (g === 3 ? 2 : 1)); days = STEPS[step]; }
     const out = { ...rv, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
     if (g === 1) { out.wrong = (rv.wrong || 0) + 1; if (rv.reps) out.lapses = (rv.lapses || 0) + 1; } else out.right = (rv.right || 0) + 1;
@@ -1745,7 +1745,7 @@
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
-        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」直接排到 60 天後。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
+        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」直接排到 30 天後。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型會自動從「認得」進到「會用」：閃卡 → 例句挖空、易混淆辨析 → 反向閃卡、拼字、聽力。</p>
         <p>複習頁可以選每天複習的範圍：全部、只練 47 個檔、只練新查的。每張卡片角落都有標籤，看得出是哪一種。</p>
