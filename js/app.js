@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.6.0';
+  const APP_VERSION = '1.7.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -21,6 +21,7 @@
     entries: [],
     index: new Map(),      // id → entry
     groups: {},
+    tomb: {},              // 刪除紀錄 { id: 時間 }（同步用）
     recent: [],            // 最近查過（最多 20 個）[{key, q, kind:'w'|'s'|'zh', zh, at}]
     dict: {},              // 查詢結果 { key: {status:'loading'|'ok'|'error', data, msg} }
     log: {},               // 每天複習數 { 'YYYY-MM-DD': n }
@@ -70,6 +71,8 @@
       group: e.group || null,
       related: Array.isArray(e.related) ? e.related : [],
       dict: e.dict || null,        // 新查的字：當時查到的字典內容
+      starAt: e.starAt || 0,       // 同步用：最後一次加入/移出複習、編輯的時間
+      editAt: e.editAt || 0,
       tags: Array.isArray(e.tags) ? e.tags : [],
       date: e.date || '',
       fixes: Array.isArray(e.fixes) ? e.fixes : [],
@@ -109,11 +112,19 @@
     S.recent = S.recent.slice(0, RECENT_MAX);
     saveRecent();
   }
-  function removeEntry(e) {
+  // 刪除時留一筆「刪除紀錄」，同步時另一台也會刪掉
+  function removeEntry(e, fromSync) {
     S.entries = S.entries.filter((x) => x !== e);
     S.index.delete(e.id);
     DB.del('entries', e.id).catch(dbFail);
+    if (!fromSync) { S.tomb[e.id] = Date.now(); saveTomb(); scheduleSync(); }
   }
+  function restoreEntry(e) {
+    if (!byId(e.id)) addEntry(e);
+    delete S.tomb[e.id]; saveTomb();
+    saveEntry(e); scheduleSync();
+  }
+  const saveTomb = () => DB.setMeta('tomb', S.tomb).catch(dbFail);
   const saveSettings = () => DB.setMeta('settings', S.settings).catch(dbFail);
   const saveGroups = () => DB.putMany('groups', Object.values(S.groups)).catch(dbFail);
   function dbFail(err) { console.error(err); toast('資料無法儲存：' + (err && err.message ? err.message : err)); }
@@ -477,9 +488,9 @@
     const note = noteEl ? noteEl.value.trim() : '';
     let e = entryFor(key);
     if (e) {
-      e.starred = true;
+      e.starred = true; e.starAt = Date.now();
       if (!e.review.reps) { e.review.status = 'new'; e.review.due = Date.now(); }
-      if (note && !e.notes.includes(note)) e.notes.push(note);
+      if (note && !e.notes.includes(note)) { e.notes.push(note); e.editAt = Date.now(); }
       saveEntry(e);
     } else if (key.startsWith('w:')) {
       const d = (S.dict[key] || {}).data;
@@ -506,6 +517,8 @@
       e.review.status = 'new'; e.review.due = Date.now();
       addEntry(e); saveEntry(e);
     }
+    if (e) e.starAt = e.starAt || Date.now();
+    scheduleSync();
     toast('已加入複習，存在「新查的」');
     render();
   }
@@ -513,11 +526,11 @@
   function removeFromReview(e) {
     if (e.src === 'new') {
       removeEntry(e);
-      toastAction(`已刪除「${e.type === 'word' ? e.text : '這個句子'}」`, '復原', () => { addEntry(e); saveEntry(e); render(); });
+      toastAction(`已刪除「${e.type === 'word' ? e.text : '這個句子'}」`, '復原', () => { restoreEntry(e); render(); });
     } else {
       const before = { ...e.review };
-      e.starred = false; saveEntry(e);
-      toastAction('已移出複習', '復原', () => { e.starred = true; e.review = before; saveEntry(e); render(); });
+      e.starred = false; e.starAt = Date.now(); saveEntry(e); scheduleSync();
+      toastAction('已移出複習', '復原', () => { e.starred = true; e.starAt = Date.now(); e.review = before; saveEntry(e); scheduleSync(); render(); });
     }
     render();
   }
@@ -1083,7 +1096,7 @@
             e.zh = v('ed-zh').trim();
           }
           e.notes = lines('ed-notes');
-          e.edited = true;
+          e.edited = true; e.editAt = Date.now();
           saveEntry(e);
           S.editing = null;
           toast('已儲存');
@@ -1102,7 +1115,7 @@
     listen: ['聽發音選字', '聽系統語音，選出聽到的字'],
     spell: ['拼字', '看中文或聽發音，自己拼出英文'],
   };
-  const GRADES = [['忘了', 'grade-0'], ['困難', 'grade-1'], ['記得', 'grade-2'], ['簡單', 'grade-3']];
+  const GRADES = [['不熟', 'grade-0'], ['記得', 'grade-2'], ['簡單', 'grade-3'], ['很熟', 'grade-4']];
   const LEECH = 4;
 
   const inReview = (e) => e.starred && !e.review.suspended && !e.temp;
@@ -1113,16 +1126,17 @@
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
   /* 複習排程：階梯式（7 → 15 → 30 → 60 → 90 天，最長 90 天）
-     忘了：明天再出現、退回第一階；困難：3 天、階數不變；記得：往上一階；簡單：往上兩階 */
+     不熟：3 天、退回第一階；記得：往上一階；簡單：往上兩階；很熟：直接 60 天，之後 90 天 */
   const STEPS = [7, 15, 30, 60, 90];
   const stepOf = (rv) => (Number.isInteger(rv.step) ? rv.step : -1);
   function scheduleFor(e, g, now = Date.now()) {
     const rv = e.review;
     let step = stepOf(rv);
     let days;
-    if (g === 1) { step = -1; days = 1; }
-    else if (g === 2) { days = 3; }
-    else { step = Math.min(STEPS.length - 1, step + (g === 4 ? 2 : 1)); days = STEPS[step]; }
+    const top = STEPS.length - 1;
+    if (g === 1) { step = -1; days = 3; }
+    else if (g === 4) { step = step < 3 ? 3 : top; days = STEPS[step]; }
+    else { step = Math.min(top, step + (g === 3 ? 2 : 1)); days = STEPS[step]; }
     const out = { ...rv, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
     if (g === 1) { out.wrong = (rv.wrong || 0) + 1; if (rv.reps) out.lapses = (rv.lapses || 0) + 1; } else out.right = (rv.right || 0) + 1;
     return out;
@@ -1208,6 +1222,12 @@
     } else S.session.items = shuffle(S.session.items);
     go('review/quiz');
   }
+  // 再練一輪：還沒學過的新字（新查的優先，47 個檔隨機），算真的進度；不碰到期或今天複習過的字
+  function extraPool() {
+    const pool = S.entries.filter((e) => isNew(e) && inScope(e));
+    return [...shuffle(pool.filter((e) => e.src === 'new')), ...shuffle(pool.filter((e) => e.src !== 'new'))];
+  }
+  const startExtra = () => startSession(extraPool().slice(0, 10), 'mix', '再練一輪');
   const startToday = () => startSession(todayPlan().list, 'mix', '今天的複習');
   const startCustom = () => {
     const R = S.reviewSetup;
@@ -1265,14 +1285,15 @@
         <span class="today-s">到期 ${plan.due.length} 個 + 新字 ${plan.fresh.length} 個（每天新字上限 ${S.settings.newPerDay}，今天還能加 ${plan.newLeft} 個）</span>
         <button class="btn today-btn" data-act="rv-today">開始今天的複習</button>`
         : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，都完成了` : '今天沒有要複習的字'}</span>
-        <span class="today-s">${inR.length ? '明天再來。想多練可以用下面的自訂複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>`}
+        <span class="today-s">${inR.length ? '想多學一點，可以再練一輪新字。到期的字還是照原本的日子複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>
+        ${extraPool().length ? `<button class="btn today-btn" data-act="rv-extra">再練一輪（${Math.min(10, extraPool().length)} 個新字）</button>` : ''}`}
       </section>
       <div class="scope-row"><span class="muted small">每天複習的範圍</span>
         <div class="seg small-seg">${[['all', '全部'], ['old', '47 個檔'], ['new', '新查的']].map(([k, t]) => `<button class="${S.settings.reviewScope === k ? 'on' : ''}" data-act="rv-scope" data-s="${k}">${t}</button>`).join('')}</div>
       </div>
       ${leeches.length ? `<section class="block leech">
-        <div class="block-head"><h3>頑固字 · 常忘記的 ${leeches.length} 個</h3><button class="link" data-act="rv-leech">專門練 ${ic('chev')}</button></div>
-        <div class="chips">${leeches.slice(0, 12).map((e) => `<a class="chip-link" href="#/entry/${encodeURIComponent(e.id)}"><b lang="en">${esc(e.text)}</b> 忘了 ${Math.max(e.review.lapses || 0, e.review.wrong || 0)} 次</a>`).join('')}</div>
+        <div class="block-head"><h3>頑固字 · 常按不熟的 ${leeches.length} 個</h3><button class="link" data-act="rv-leech">專門練 ${ic('chev')}</button></div>
+        <div class="chips">${leeches.slice(0, 12).map((e) => `<a class="chip-link" href="#/entry/${encodeURIComponent(e.id)}"><b lang="en">${esc(e.text)}</b> 不熟 ${Math.max(e.review.lapses || 0, e.review.wrong || 0)} 次</a>`).join('')}</div>
       </section>` : ''}
       <div class="rv-summary">
         <div><span class="stat-n tnum">${inR.length}</span><span class="stat-l">複習中的字</span></div>
@@ -1336,12 +1357,12 @@
         <span>${esc(o.text)}</span>${s.picked ? `<span class="choice-zh">${esc((o.senses[0] || {}).zh || '')} ${usageChip(o.usage)}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
-  const nextBar = (s, ok) => `<div class="start-bar"><span class="${ok ? 'ok-txt' : 'bad-txt'}">${ok ? '答對了' : '答錯了，這一輪最後會再考一次'}</span><button class="btn primary" data-act="next" id="next-btn">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>`;
+  const nextBar = (s, ok) => `<div class="start-bar"><span class="${ok ? 'ok-txt' : 'bad-txt'}">${ok ? '答對了' : '答錯了，3 天後會再考'}</span><button class="btn primary" data-act="next" id="next-btn">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>`;
   function gradeBar(s, e) {
     if (!s.flipped) return '<div class="grade placeholder"><button class="btn primary wide" data-act="flip">顯示答案</button></div>';
     const it = s.items[s.i];
     const days = it.again ? null : previewFor(e);
-    return `<div class="grade four">${GRADES.map(([t, c], g) => `<button class="btn ${c}" data-act="grade" data-g="${g + 1}"><span>${t}</span>${days ? `<small>${g === 0 ? '再考一次' : SRS.fmtDays(days[g])}</small>` : ''}</button>`).join('')}</div>`;
+    return `<div class="grade four">${GRADES.map(([t, c], g) => `<button class="btn ${c}" data-act="grade" data-g="${g + 1}"><span>${t}</span>${days ? `<small>${SRS.fmtDays(days[g])}</small>` : ''}</button>`).join('')}</div>`;
   }
   function blanked(it, e, picked) {
     if (!it.ex) return '';
@@ -1484,8 +1505,8 @@
     const s = S.session;
     if (!s || s.items.some((x) => x.result === null)) return viewReviewHome();
     const firsts = s.items.filter((x) => !x.again);
-    const ok = firsts.filter((x) => x.result >= 3).length;
-    const label = { 1: ['忘了', 'bad'], 2: ['困難', 'fuzzy'], 3: ['記得', 'ok'], 4: ['簡單', 'ok'] };
+    const ok = firsts.filter((x) => x.result >= 2).length;
+    const label = { 1: ['不熟', 'bad'], 2: ['記得', 'ok'], 3: ['簡單', 'ok'], 4: ['很熟', 'ok'] };
     return {
       title: '複習結果', tab: 'review', back: '#/review',
       html: `
@@ -1502,11 +1523,11 @@
         ${ok < firsts.length ? '<button class="btn primary" data-act="rv-retry">把沒記住的再練一次</button>' : ''}
         <a class="btn ghost" href="#/review">回複習首頁</a>
       </div>
-      <p class="muted small">複習間隔一階一階往上：7 → 15 → 30 → 60 → 90 天（最長 90 天）。忘了的字明天再出現。</p>`,
+      <p class="muted small">複習間隔一階一階往上：7 → 15 → 30 → 60 → 90 天（最長 90 天）。不熟的字 3 天後再出現。</p>`,
     };
   }
 
-  // g:1 忘了 2 困難 3 記得 4 簡單
+  // g:1 不熟 2 記得 3 簡單 4 很熟
   function grade(g) {
     const s = S.session; const it = s.items[s.i]; const e = byId(it.id);
     s.undo = { i: s.i, id: e.id, review: { ...e.review }, daily: { ...S.daily }, log: S.log[today()] || 0, len: s.items.length, result: it.result, next: it.next };
@@ -1514,12 +1535,12 @@
     if (it.again) return;
     const wasNew = !e.review.reps;
     e.review = scheduleFor(e, g);
-    it.next = g === 1 ? '明天' : SRS.fmtDays(e.review.days) + '後';
+    it.next = SRS.fmtDays(e.review.days) + '後';
     if (wasNew) { rollDaily(); S.daily.newDone++; DB.setMeta('daily', S.daily).catch(dbFail); }
     S.log[today()] = (S.log[today()] || 0) + 1;
     DB.setMeta('log', S.log).catch(dbFail);
     saveEntry(e);
-    if (g === 1) s.items.push({ ...makeItem(e, it.kind === 'confuse' || it.kind === 'cloze' ? it.kind : 'flash'), again: true });
+    scheduleSync();
   }
   function undo() {
     const s = S.session; const u = s.undo;
@@ -1544,7 +1565,7 @@
     s.typed = val.trim();
     const ok = s.typed.toLowerCase().replace(/\s+/g, ' ') === e.text.toLowerCase();
     s.picked = ok ? it.id : '__wrong';
-    grade(ok ? 3 : 1);
+    grade(ok ? 2 : 1);
     render();
   }
 
@@ -1724,7 +1745,7 @@
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
-        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「困難」3 天後再考；按「忘了」明天再出現，並且從第一階重新開始。</p>
+        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」直接排到 60 天後。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型會自動從「認得」進到「會用」：閃卡 → 例句挖空、易混淆辨析 → 反向閃卡、拼字、聽力。</p>
         <p>複習頁可以選每天複習的範圍：全部、只練 47 個檔、只練新查的。每張卡片角落都有標籤，看得出是哪一種。</p>
@@ -1891,6 +1912,7 @@
         <label class="set-row"><span>主題</span>${sel('set-theme', 'theme', [['light', '白底'], ['dark', '黑底'], ['system', '跟隨系統']])}</label>
         <label class="set-row"><span>畫面大小</span>${sel('set-zoom', 'zoom', [[1, '標準'], [1.25, '大'], [1.5, '更大'], [1.75, '特大'], [2, '兩倍'], [2.25, '兩倍多']])}</label>
       </section>
+      ${syncSection()}
       <section class="block panel"><h3>資料</h3>
         <div class="set-row"><span>已使用空間</span><span class="muted tnum" id="usage-v">計算中…</span></div>
         <div class="data-row"><div><b>清除最近查過</b><p class="muted small">只刪首頁那 20 個紀錄，其他都不動。</p></div>
@@ -1978,6 +2000,139 @@
     if (v.after) v.after();
   }
 
+  /* ---------- 手機和電腦同步（存在自己的私人 GitHub 資料夾） ----------
+     每台裝置設定一次通行碼。打開 App、複習、加字、刪字之後自動同步。
+     合併規則：同一個字的複習進度，以「最後一次複習」的那一台為準；
+     加入／移出複習、編輯，以最後改的為準；刪除會留紀錄，另一台也刪掉。 */
+  const SYNC_DEFAULT = { token: '', repo: 'nmymdf/vocab-files', path: 'sync/danciben-progress.json', lastAt: 0, err: '' };
+  const syncCfg = () => ({ ...SYNC_DEFAULT, ...(S.settings.sync || {}) });
+  let syncTimer = null, syncing = false, syncAgain = false;
+  function scheduleSync(ms = 8000) {
+    if (!syncCfg().token) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => syncNow(), ms);
+  }
+  const b64enc = (str) => btoa(unescape(encodeURIComponent(str)));
+  const b64dec = (b64) => decodeURIComponent(escape(atob(b64.replace(/\s/g, ''))));
+  async function gh(cfg, method, body, raw) {
+    const r = await fetch(`https://api.github.com/repos/${cfg.repo}/contents/${cfg.path}`, {
+      method,
+      headers: { Authorization: 'Bearer ' + cfg.token, Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
+    });
+    return r;
+  }
+  async function syncGet(cfg) {
+    const r = await gh(cfg, 'GET');
+    if (r.status === 404) return { data: null, sha: null };
+    if (r.status === 401 || r.status === 403) throw new Error('通行碼不對或沒有權限');
+    if (!r.ok) throw new Error('GitHub 回應 ' + r.status);
+    const meta = await r.json();
+    let text = meta.content ? b64dec(meta.content) : '';
+    if (!text) { const r2 = await gh(cfg, 'GET', null, true); text = await r2.text(); }
+    return { data: JSON.parse(text), sha: meta.sha };
+  }
+  const changedAt = (e) => Math.max(e.src === 'new' ? e.added || 0 : 0, e.starAt || 0, e.editAt || 0, e.review.last || 0);
+  const CONTENT = ['text', 'ipa', 'senses', 'zh', 'examples', 'forms', 'notes', 'usage', 'type'];
+  function buildPayload() {
+    const entries = {};
+    S.entries.forEach((e) => {
+      const isNewEntry = e.src === 'new';
+      if (!isNewEntry && !e.review.reps && !e.starAt && !e.editAt) return; // 47 個檔裡還沒動過的字不用傳
+      const c = { r: e.review, st: e.starred, sa: e.starAt || 0 };
+      if (isNewEntry || e.editAt) {
+        c.ea = e.editAt || 0;
+        c.c = {};
+        CONTENT.forEach((k) => { c.c[k] = e[k]; });
+        if (isNewEntry) { c.c.src = 'new'; c.c.added = e.added; }
+      }
+      entries[e.id] = c;
+    });
+    return { app: 'danciben-sync', v: 1, at: Date.now(), entries, tomb: S.tomb, log: S.log };
+  }
+  function mergeRemote(rem) {
+    let changed = 0;
+    const touched = new Set();
+    Object.entries(rem.tomb || {}).forEach(([id, t]) => {
+      if (!S.tomb[id] || S.tomb[id] < t) S.tomb[id] = t;
+      const e = byId(id);
+      if (e && t >= changedAt(e)) { removeEntry(e, true); changed++; }
+    });
+    Object.entries(rem.entries || {}).forEach(([id, c]) => {
+      let e = byId(id);
+      const remAt = Math.max(c.sa || 0, c.ea || 0, (c.r && c.r.last) || 0, (c.c && c.c.added) || 0);
+      if (S.tomb[id] && S.tomb[id] >= remAt) return;
+      if (!e) {
+        if (!c.c || c.c.src !== 'new') return;
+        e = normEntry({ id, ...c.c, review: c.r, starred: c.st, starAt: c.sa, editAt: c.ea, src: 'new' });
+        addEntry(e); touched.add(e); changed++;
+        return;
+      }
+      if (c.r && (c.r.last || 0) > (e.review.last || 0)) { e.review = { ...e.review, ...c.r }; touched.add(e); }
+      if ((c.sa || 0) > (e.starAt || 0)) { e.starred = !!c.st; e.starAt = c.sa; touched.add(e); }
+      if (c.c && (c.ea || 0) > (e.editAt || 0)) { CONTENT.forEach((k) => { if (k in c.c) e[k] = c.c[k]; }); e.editAt = c.ea; if (e.src === 'import') e.edited = true; touched.add(e); }
+    });
+    Object.entries(rem.log || {}).forEach(([k, v]) => { if ((S.log[k] || 0) < v) S.log[k] = v; });
+    if (touched.size) saveEntries([...touched]);
+    saveTomb();
+    DB.setMeta('log', S.log).catch(dbFail);
+    return changed + touched.size;
+  }
+  async function syncNow(manual) {
+    const cfg = syncCfg();
+    if (!cfg.token) { if (manual) toast('請先貼上通行碼'); return; }
+    if (syncing) { syncAgain = true; return; }
+    syncing = true;
+    if (manual) toast('同步中…');
+    let n = 0;
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { data, sha } = await syncGet(cfg);
+        if (data && data.app === 'danciben-sync') n = mergeRemote(data);
+        const body = { message: '單字本同步 ' + new Date().toLocaleString('zh-TW'), content: b64enc(JSON.stringify(buildPayload())) };
+        if (sha) body.sha = sha;
+        const r = await gh(cfg, 'PUT', body);
+        if (r.ok) break;
+        if ((r.status === 409 || r.status === 422) && attempt === 0) continue; // 另一台剛好也在同步：重來一次
+        throw new Error(r.status === 401 || r.status === 403 ? '通行碼不對或沒有寫入權限' : 'GitHub 回應 ' + r.status);
+      }
+      S.settings.sync = { ...cfg, lastAt: Date.now(), err: '' };
+      if (manual) toast(n ? `同步完成，更新了 ${n} 筆` : '同步完成，兩邊一致');
+    } catch (err) {
+      S.settings.sync = { ...cfg, err: navigator.onLine === false ? '沒有網路' : String(err && err.message || err) };
+      if (manual) toast('同步失敗：' + S.settings.sync.err);
+    }
+    saveSettings();
+    syncing = false;
+    if (!/review\/quiz/.test(location.hash) && (n || manual || /settings/.test(location.hash))) render();
+    if (syncAgain) { syncAgain = false; scheduleSync(2000); }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && syncTimer) { clearTimeout(syncTimer); syncNow(); } });
+
+  function syncSection() {
+    const cfg = syncCfg();
+    const when = cfg.lastAt ? new Date(cfg.lastAt).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    return `<section class="block panel"><h3>手機和電腦同步</h3>
+      <p class="muted small">兩台都設定同一組通行碼後，複習進度、新查的字會自動合併成一套。資料存在你的私人資料夾 ${esc(cfg.repo)}。</p>
+      <p class="sync-status ${cfg.err ? 'bad-txt' : ''}">${!cfg.token ? '還沒設定' : cfg.err ? '上次同步失敗：' + esc(cfg.err) : when ? '上次同步：' + esc(when) : '已設定，還沒同步'}</p>
+      ${cfg.token ? `<div class="sync-row"><button class="btn primary small" data-act="sync-now">立即同步</button><button class="btn ghost small" data-act="sync-off">停用同步</button></div>` : `
+      <label class="set-row sync-token"><span>通行碼</span><input id="sync-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+      <button class="btn primary small" data-act="sync-save">儲存並同步</button>
+      <details class="sync-help"><summary>怎麼拿到通行碼？</summary>
+        <ol>
+          <li>用電腦登入 GitHub，打開 github.com/settings/personal-access-tokens/new</li>
+          <li>Token name 打「單字本」，Expiration 選「No expiration」（或一年）</li>
+          <li>Repository access 選「Only select repositories」，選 <b>vocab-files</b></li>
+          <li>Permissions → Repository permissions → <b>Contents</b> 選「Read and write」</li>
+          <li>按最下面「Generate token」，複製那一串（github_pat_ 開頭）</li>
+          <li>貼到這裡；手機也貼同一串</li>
+        </ol>
+        <p class="muted small">這組通行碼只能讀寫 vocab-files，存在這台裝置裡。</p>
+      </details>`}
+    </section>`;
+  }
+
   const brandMeta = () => `<span class="brand-meta"><em class="author-inline">作者：ArchieKUO</em><span class="ver">v${APP_VERSION}</span></span>`;
 
   /* ---------- 點擊事件 ---------- */
@@ -2001,7 +2156,7 @@
     'close-result': () => { S.cur = null; render(); },
     mode: (d) => { S.mode = d.mode; render(); document.getElementById('q')?.focus(); },
     clear: () => { S.draft = ''; render(); document.getElementById('q').focus(); },
-    'set-usage': (d) => { const e = byId(d.id); e.usage = e.usage === d.u ? null : d.u; e.edited = true; saveEntry(e); render(); },
+    'set-usage': (d) => { const e = byId(d.id); e.usage = e.usage === d.u ? null : d.u; e.edited = true; e.editAt = Date.now(); saveEntry(e); render(); },
     'lib-filter': (d) => { S.lib.filter = d.f; S.lib.limit = 100; render(); },
     'lib-usage': (d) => { S.lib.usage = d.u; S.lib.limit = 100; render(); },
     'lib-tag': (d) => { S.lib = { ...S.lib, tag: d.t, filter: 'all', usage: 'all', q: '', sort: 'file', limit: 100 }; go('library'); },
@@ -2015,12 +2170,20 @@
       if (!e) return;
       removeEntry(e);
       go('library');
-      toastAction(`已刪除「${e.type === 'word' ? e.text : '這個句子'}」`, '復原', () => { addEntry(e); saveEntry(e); render(); });
+      toastAction(`已刪除「${e.type === 'word' ? e.text : '這個句子'}」`, '復原', () => { restoreEntry(e); render(); });
     },
     'rv-scope': (d) => { S.settings.reviewScope = d.s; saveSettings(); render(); },
     'rv-set': (d) => { S.reviewSetup[d.k] = d.v; S.reviewSetup.open = true; render(); },
     'rv-start': () => startCustom(),
+    'sync-now': () => syncNow(true),
+    'sync-off': () => { S.settings.sync = { ...syncCfg(), token: '', err: '', lastAt: 0 }; saveSettings(); render(); toast('已停用同步'); },
+    'sync-save': () => {
+      const t = (document.getElementById('sync-token') || {}).value || '';
+      if (!/^(github_pat_|ghp_)\w{20,}/.test(t.trim())) { toast('通行碼看起來不對，應該是 github_pat_ 開頭的一長串'); return; }
+      S.settings.sync = { ...syncCfg(), token: t.trim(), err: '' }; saveSettings(); render(); syncNow(true);
+    },
     'rv-today': () => startToday(),
+    'rv-extra': () => startExtra(),
     'rv-leech': () => startSession(shuffle(S.entries.filter(isLeech)).slice(0, 30), 'mix', '頑固字特訓'),
     'rv-retry': () => {
       const s = S.session;
@@ -2078,7 +2241,7 @@
       if (!list.length) { toast('「新查的」裡沒有東西'); return; }
       list.forEach(removeEntry);
       render();
-      toastAction(`已刪除 ${list.length} 筆新查的`, '復原', () => { list.forEach((e) => { addEntry(e); saveEntry(e); }); render(); });
+      toastAction(`已刪除 ${list.length} 筆新查的`, '復原', () => { list.forEach(restoreEntry); render(); });
     },
     'reset-progress': () => {
       if (S.confirm !== 'reset-progress') { S.confirm = 'reset-progress'; render(); return; }
@@ -2128,6 +2291,7 @@
         DB.all('entries'), DB.all('groups'), DB.getMeta('settings'), DB.getMeta('history'), DB.getMeta('log'), DB.getMeta('daily'),
         DB.getMeta('recent'), DB.getMeta('dictCache'),
       ]);
+      S.tomb = (await DB.getMeta('tomb')) || {};
       // 舊版：查過的字會自動存進單字庫。現在只有按「加入複習」才保存，
       // 所以舊的查詢紀錄：有加星號的搬到「新查的」，沒加的移除（只留在最近查過）。
       const dropped = [];
@@ -2210,6 +2374,7 @@
         history.replaceState(null, '', location.pathname + '#/share');
       }
     } catch (err) { /* 忽略 */ }
+    if (syncCfg().token) setTimeout(() => syncNow(), 1500);
     if (/^#[a-z]/.test(location.hash)) { location.hash = '#/' + location.hash.slice(1); return; }
     render();
   }

@@ -1089,3 +1089,10 @@ html:not(.wide) body.focus-mode .start-bar {
 html:not(.wide) body.focus-mode .grade .btn { height: 62px; min-height: 62px; }
 html:not(.wide) body.focus-mode .grade.placeholder .btn { width: 100%; font-size: 1.1rem; border-radius: 14px; }
 html:not(.wide) body.focus-mode .start-bar .btn { min-height: 52px; }
+.grade-4 { color: var(--gold); background: var(--gold-soft); border-color: transparent; }
+.today .today-btn + .today-btn { margin-top: 0; }
+.sync-status { margin: 0; font-weight: 600; }
+.sync-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sync-token input { min-height: 38px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; max-width: 360px; }
+.sync-help summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.sync-help ol { margin: 6px 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
