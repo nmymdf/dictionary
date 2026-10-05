@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.7.1';
+  const APP_VERSION = '1.7.2';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -2026,7 +2026,8 @@
   async function syncGet(cfg) {
     const r = await gh(cfg, 'GET');
     if (r.status === 404) return { data: null, sha: null };
-    if (r.status === 401 || r.status === 403) throw new Error('通行碼不對或沒有權限');
+    if (r.status === 401) throw new Error('通行碼不對（401）');
+    if (r.status === 403) throw new Error('沒有讀取權限（403）');
     if (!r.ok) throw new Error('GitHub 回應 ' + r.status);
     const meta = await r.json();
     let text = meta.content ? b64dec(meta.content) : '';
@@ -2095,7 +2096,9 @@
         const r = await gh(cfg, 'PUT', body);
         if (r.ok) break;
         if ((r.status === 409 || r.status === 422) && attempt === 0) continue; // 另一台剛好也在同步：重來一次
-        throw new Error(r.status === 401 || r.status === 403 ? '通行碼不對或沒有寫入權限' : 'GitHub 回應 ' + r.status);
+        let why = '';
+        try { why = (await r.json()).message || ''; } catch (e) { /* 沒有說明 */ }
+        throw new Error((r.status === 401 ? '通行碼不對（401）' : r.status === 403 ? '沒有寫入權限（403）' : r.status === 404 ? '找不到 vocab-files，通行碼沒有選到這個資料夾（404）' : 'GitHub 回應 ' + r.status) + (why ? '：' + why : ''));
       }
       S.settings.sync = { ...cfg, lastAt: Date.now(), err: '' };
       if (manual) toast(n ? `同步完成，更新了 ${n} 筆` : '同步完成，兩邊一致');

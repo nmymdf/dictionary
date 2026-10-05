@@ -1,6 +1,6 @@
 // 最簡單的 service worker：讓 Chrome 可以「安裝」，並快取 App 外殼。
 // 查詢字典和翻譯需要連網，不會被快取。
-const CACHE = 'danciben-v18';
+const CACHE = 'danciben-v19';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/db.js', 'js/srs.js', 'js/lookup.js', 'js/yahoo.js', 'js/docx.js', 'js/vendor/jszip.min.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
