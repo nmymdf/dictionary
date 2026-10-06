@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.7.2';
+  const APP_VERSION = '1.8.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1211,15 +1211,23 @@
     return { id: e.id, kind, options, ex, result: null, next: '', again: false };
   }
 
+  // 這一輪的位置存進資料庫：離開、App 被關掉，回來都能接著做
+  const sessionLeft = (s) => (s ? s.items.filter((x) => x.result === null).length : 0);
+  function saveSession() {
+    const s = S.session;
+    const keep = s && sessionLeft(s) ? { ...s, undo: null, pick: null, flipped: false, picked: null, typed: '', day: today() } : null;
+    DB.setMeta('session', keep).catch(dbFail);
+  }
   function startSession(list, mode, title) {
     if (!list.length) { toast('沒有要複習的字'); return; }
-    S.session = { mode, title, i: 0, flipped: false, picked: null, typed: '', items: list.map((e) => makeItem(e, mode === 'mix' ? pickKind(e) : mode)), undo: null };
+    S.session = { mode, title, i: 0, flipped: false, picked: null, pick: null, typed: '', items: list.map((e) => makeItem(e, mode === 'mix' ? pickKind(e) : mode)), undo: null };
     if (mode === 'mix') {
       // 新字留在後段，先清到期的；同組的字不要連在一起
       const due = shuffle(S.session.items.filter((x) => byId(x.id).review.reps));
       const fresh = shuffle(S.session.items.filter((x) => !byId(x.id).review.reps));
       S.session.items = [...due, ...fresh];
     } else S.session.items = shuffle(S.session.items);
+    saveSession();
     go('review/quiz');
   }
   // 再練一輪：還沒學過的新字（新查的優先，47 個檔隨機），算真的進度；不碰到期或今天複習過的字
@@ -1272,6 +1280,7 @@
     const mastered = inR.filter((e) => statusKey(e) === 'mastered').length;
     const doneToday = S.log[today()] || 0;
     const pool = customPool();
+    const live = S.session && sessionLeft(S.session) ? S.session : null;
     const opt = (group, val, title, sub) => `
       <button class="opt ${R[group] === val ? 'on' : ''}" data-act="rv-set" data-k="${group}" data-v="${val}" aria-pressed="${R[group] === val}">
         <span class="opt-t">${title}</span>${sub ? `<span class="opt-s">${sub}</span>` : ''}</button>`;
@@ -1280,7 +1289,11 @@
       html: `
       <section class="today">
         <span class="today-l">今天的複習${streak() ? ` · 連續 ${streak()} 天` : ''}</span>
-        ${plan.list.length ? `
+        ${live ? `
+        <span class="today-n">${esc(live.title)}還沒做完</span>
+        <span class="today-s">已完成 ${live.items.length - sessionLeft(live)}／${live.items.length}，從剛才那一張接著做</span>
+        <button class="btn today-btn" data-act="rv-resume">繼續剛才的複習（已完成 ${live.items.length - sessionLeft(live)}／${live.items.length}）</button>`
+        : plan.list.length ? `
         <span class="today-n"><b class="tnum">${plan.list.length}</b> 個 · 約 ${mins} 分鐘</span>
         <span class="today-s">到期 ${plan.due.length} 個 + 新字 ${plan.fresh.length} 個（每天新字上限 ${S.settings.newPerDay}，今天還能加 ${plan.newLeft} 個）</span>
         <button class="btn today-btn" data-act="rv-today">開始今天的複習</button>`
@@ -1362,12 +1375,54 @@
     if (!s.flipped) return '<div class="grade placeholder"><button class="btn primary wide" data-act="flip">顯示答案</button></div>';
     const it = s.items[s.i];
     const days = it.again ? null : previewFor(e);
+    if (s.pick) {
+      const label = GRADES[s.pick - 1][0];
+      const last = s.i + 1 >= s.items.length;
+      return `<div class="grade picked"><button class="btn primary next-btn" data-act="grade-next" id="next-btn"><span>${last ? '看結果' : '下一題'} →</span><small>${label}${days ? '・' + SRS.fmtDays(days[s.pick - 1]) + '後' : ''}</small></button><button class="btn ghost change-btn" data-act="grade-change">改</button></div>`;
+    }
     return `<div class="grade four">${GRADES.map(([t, c], g) => `<button class="btn ${c}" data-act="grade" data-g="${g + 1}"><span>${t}</span>${days ? `<small>${SRS.fmtDays(days[g])}</small>` : ''}</button>`).join('')}</div>`;
+  }
+  // 手機複習：翻面後例句的每個字都可以點，跳出小視窗查意思（電腦版用左邊的「查詢」）
+  const canPeek = () => !document.documentElement.classList.contains('wide');
+  function peekText(en, word, re) {
+    if (!canPeek()) return re ? esc(en).replace(new RegExp(re.source, 'i'), (m) => `<mark>${m}</mark>`) : highlight(en, word);
+    let a = -1, b = -1;
+    const m = (re || wordRe(word)).exec(en);
+    if (m) { a = m.index; b = m.index + m[0].length; }
+    let out = '', last = 0;
+    en.replace(/[A-Za-z][A-Za-z'’-]*/g, (tok, i) => {
+      out += esc(en.slice(last, i));
+      const w = tok.replace(/['’-]+$/, '');
+      const span = `<span class="pk" data-act="peek" data-w="${esc(w)}">${esc(tok)}</span>`;
+      out += i >= a && i < b ? `<mark>${span}</mark>` : span;
+      last = i + tok.length;
+      return tok;
+    });
+    return out + esc(en.slice(last));
+  }
+  function peekSheet() {
+    const w = S.peek;
+    if (!w) return '';
+    const key = wordKey(w);
+    const r = S.dict[key];
+    const d = r && r.status === 'ok' ? r.data : null;
+    const e = byId(key);
+    const inRv = e && inReview(e);
+    const body = !r || r.status === 'loading' ? '<div class="loading"><span class="spinner"></span>查詢中…</div>'
+      : r.status === 'error' ? `<p class="bad-txt">${esc(r.msg)}</p>`
+      : `${d.ipa ? `<span class="ipa">${esc(d.ipa)}</span>` : ''}<ul class="peek-gist">${d.gist.slice(0, 4).map((g) => `<li>${g.pos ? `<span class="pos">${esc(g.pos)}</span>` : ''}${esc(g.zh)}</li>`).join('')}</ul>`;
+    return `<div class="peek-bg" data-act="peek-close"></div>
+      <section class="peek-sheet" role="dialog" aria-label="查 ${esc(w)}">
+        <div class="peek-head"><b class="peek-word" lang="en">${esc(d ? d.word : w)}</b>${speakBtn(w, '播放發音')}<button class="icon-btn peek-x" data-act="peek-close" aria-label="關閉">✕</button></div>
+        ${body}
+        <div class="peek-btns">${d ? (inRv ? '<span class="muted">已在複習中</span>' : `<button class="btn ghost" data-act="peek-add">＋ 加入複習</button>`) : ''}<button class="btn primary" data-act="peek-close">回到卡片</button></div>
+      </section>`;
   }
   function blanked(it, e, picked) {
     if (!it.ex) return '';
     const re = wordRe(e.text);
-    return esc(it.ex.en).replace(new RegExp(re.source, 'i'), (m) => (picked ? `<mark>${m}</mark>` : '<span class="blank">＿＿＿＿</span>'));
+    if (picked) return peekText(it.ex.en, e.text, re);
+    return esc(it.ex.en).replace(new RegExp(re.source, 'i'), () => '<span class="blank">＿＿＿＿</span>');
   }
   // 複習翻面：兩句最短的例句（有中文翻譯的優先）
   function shortExamples(e, n = 2) {
@@ -1397,7 +1452,7 @@
     }).catch(() => { saveEntry(e); });
   }
   const cardBack = (e) => (e.type === 'word'
-    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x) => `<div class="card-ex"><div class="ex-en small" lang="en">${highlight(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
+    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x) => `<div class="card-ex"><div class="ex-en small" lang="en">${peekText(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
     : `<p class="sent-zh">${esc(e.zh)}</p>`) + (e.src === 'new' && e.notes.length ? `<p class="rv-notes">${ic('pen')} ${esc(e.notes.join('；'))}</p>` : '');
 
   const RENDER = {
@@ -1424,7 +1479,7 @@
           ${usageChip(e.usage)}
           ${!s.flipped ? `<span class="muted small flip-hint">先在心裡${e.type === 'word' ? '拼出英文' : '用英文說出來'}，再點一下翻面</span>` : ''}
         </span>
-        ${s.flipped ? `<span class="flash-back center-back"><span class="${e.type === 'word' ? 'headword' : 'flash-sent'}" lang="en">${esc(e.text)}</span>${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${e.type === 'word' && e.examples[0] ? `<span class="ex-en small" lang="en">${highlight(e.examples[0].en, e.text)}</span>` : ''}</span>` : ''}
+        ${s.flipped ? `<span class="flash-back center-back"><span class="${e.type === 'word' ? 'headword' : 'flash-sent'}" lang="en">${esc(e.text)}</span>${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${e.type === 'word' && e.examples[0] ? `<span class="ex-en small" lang="en">${peekText(e.examples[0].en, e.text)}</span>` : ''}</span>` : ''}
       </div>
       ${s.flipped ? `<div class="center-row">${speakBtn(e.text)}</div>` : ''}${gradeBar(s, e)}`;
     },
@@ -1481,12 +1536,13 @@
 
   function viewQuiz() {
     const s = S.session;
-    if (!s) { startToday(); return { redirect: true }; }
+    if (!s || !sessionLeft(s)) { if (s && !sessionLeft(s)) { go('review/result'); } else go('review'); return { redirect: true }; }
+    while (s.items[s.i] && s.items[s.i].result !== null && s.i < s.items.length - 1) s.i++;
     const it = s.items[s.i]; const e = byId(it.id);
     if (!e) { advance(); return { redirect: true }; }
     return {
       title: s.title, tab: 'review', back: '#/review', focus: true,
-      html: progress(s) + RENDER[it.kind](s, it, e),
+      html: progress(s) + RENDER[it.kind](s, it, e) + peekSheet(),
       after() {
         const f = document.getElementById('spell-form');
         if (f) {
@@ -1532,6 +1588,7 @@
     const s = S.session; const it = s.items[s.i]; const e = byId(it.id);
     s.undo = { i: s.i, id: e.id, review: { ...e.review }, daily: { ...S.daily }, log: S.log[today()] || 0, len: s.items.length, result: it.result, next: it.next };
     it.result = g;
+    saveSession();
     if (it.again) return;
     const wasNew = !e.review.reps;
     e.review = scheduleFor(e, g);
@@ -1540,6 +1597,7 @@
     S.log[today()] = (S.log[today()] || 0) + 1;
     DB.setMeta('log', S.log).catch(dbFail);
     saveEntry(e);
+    saveSession();
     scheduleSync();
   }
   function undo() {
@@ -1551,13 +1609,15 @@
     S.log[today()] = u.log; DB.setMeta('log', S.log).catch(dbFail);
     s.items.length = u.len;
     s.i = u.i; s.items[s.i].result = u.result; s.items[s.i].next = u.next;
-    s.flipped = false; s.picked = null; s.typed = ''; s.undo = null;
+    s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.undo = null;
+    saveSession();
     if (location.hash !== '#/review/quiz') go('review/quiz'); else render();
     toast('已復原上一題');
   }
   function advance() {
     const s = S.session;
-    s.i++; s.flipped = false; s.picked = null; s.typed = '';
+    s.i++; s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; S.peek = null;
+    saveSession();
     if (s.i >= s.items.length) { s.i = s.items.length - 1; go('review/result'); } else render();
   }
   function answerSpell(val) {
@@ -1746,6 +1806,7 @@
       <section class="block panel help">
         <h3>複習怎麼排</h3>
         <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」直接排到 30 天後。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
+        <p>選好按鈕後，要再按「下一題」才會換卡；按錯了可以按「改」重選（電腦可以按 1–4 選、Enter 下一題）。複習到一半離開，下次打開會出現「繼續剛才的複習」，從同一張卡接著做。手機翻面後可以點例句裡的字，跳出小視窗看意思；電腦直接用左邊的「查詢」，再按「複習」就回到同一張卡。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型會自動從「認得」進到「會用」：閃卡 → 例句挖空、易混淆辨析 → 反向閃卡、拼字、聽力。</p>
         <p>複習頁可以選每天複習的範圍：全部、只練 47 個檔、只練新查的。每張卡片角落都有標籤，看得出是哪一種。</p>
@@ -1996,6 +2057,13 @@
     document.title = `${v.title} · 單字本`;
     document.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('on', a.dataset.tab === v.tab));
     document.body.classList.toggle('focus-mode', !!v.focus);
+    const live = S.session && sessionLeft(S.session) ? S.session : null;
+    let rb = document.getElementById('resume-bar');
+    if (live && v.tab !== 'review') {
+      if (!rb) { rb = document.createElement('button'); rb.id = 'resume-bar'; rb.className = 'resume-bar'; rb.dataset.act = 'rv-resume'; document.body.appendChild(rb); }
+      rb.innerHTML = `${ic('cards')}<span>複習進行中 ${live.items.length - sessionLeft(live)}／${live.items.length}，點這裡回去</span>`;
+    } else if (rb) rb.remove();
+    document.body.classList.toggle('has-resume', !!(live && v.tab !== 'review'));
     if (path !== lastPath) { window.scrollTo(0, 0); lastPath = path; }
     if (v.after) v.after();
   }
@@ -2193,7 +2261,20 @@
       startSession(s.items.filter((x) => !x.again && x.result < 3).map((x) => byId(x.id)).filter(Boolean), s.mode === 'mix' ? 'mix' : s.mode, s.title);
     },
     flip: () => { if (!S.session.flipped) { S.session.flipped = true; render(); } },
-    grade: (d) => { grade(Number(d.g)); advance(); },
+    grade: (d) => { S.session.pick = Number(d.g); render(); },
+    'grade-change': () => { S.session.pick = null; render(); },
+    peek: (d) => {
+      if (!canPeek()) return;
+      const w = d.w.toLowerCase();
+      S.peek = w;
+      const r = S.dict[wordKey(w)];
+      if (!r || r.status === 'error') fetchWord(w).then(() => { if (S.peek === w && location.hash === '#/review/quiz') render(); });
+      render();
+    },
+    'peek-close': () => { S.peek = null; render(); },
+    'peek-add': () => { if (!S.peek) return; addToReview(wordKey(S.peek)); render(); },
+    'rv-resume': () => go('review/quiz'),
+    'grade-next': () => { const s = S.session; if (!s || !s.pick) return; grade(s.pick); advance(); },
     pick: (d) => {
       const s = S.session; const it = s.items[s.i];
       if (s.picked) return;
@@ -2263,6 +2344,8 @@
   };
 
   document.addEventListener('click', (ev) => {
+    const tab = ev.target.closest('a[data-tab="review"]');
+    if (tab && S.session && sessionLeft(S.session)) { ev.preventDefault(); go('review/quiz'); return; }
     const el = ev.target.closest('[data-act]');
     if (!el) return;
     const fn = actions[el.dataset.act];
@@ -2275,7 +2358,8 @@
     if (!location.hash.startsWith('#/review/quiz') || !S.session || /INPUT|TEXTAREA|SELECT/.test(ev.target.tagName)) return;
     const s = S.session;
     if ((ev.key === ' ' || ev.key === 'Enter') && !s.flipped && document.querySelector('.flash')) { ev.preventDefault(); actions.flip(); }
-    else if (/^[1-4]$/.test(ev.key) && s.flipped) { grade(Number(ev.key)); advance(); }
+    else if (/^[1-4]$/.test(ev.key) && s.flipped) { s.pick = Number(ev.key); render(); }
+    else if (ev.key === 'Enter' && s.pick) { ev.preventDefault(); actions['grade-next'](); }
     else if (ev.key === 'Enter' && s.picked) { ev.preventDefault(); advance(); }
   });
   window.addEventListener('hashchange', render);
@@ -2295,6 +2379,7 @@
         DB.getMeta('recent'), DB.getMeta('dictCache'),
       ]);
       S.tomb = (await DB.getMeta('tomb')) || {};
+      const sess = await DB.getMeta('session');
       // 舊版：查過的字會自動存進單字庫。現在只有按「加入複習」才保存，
       // 所以舊的查詢紀錄：有加星號的搬到「新查的」，沒加的移除（只留在最近查過）。
       const dropped = [];
@@ -2352,6 +2437,9 @@
       if (cache) Object.entries(cache).forEach(([k, data]) => { S.dict[k] = { status: 'ok', data }; });
       S.log = log || {};
       S.daily = daily || S.daily;
+      // 今天還沒複習完的那一輪：接著做（同一張卡，不重新洗牌）
+      if (sess && sess.day === today() && sess.items && sessionLeft(sess) && sess.items.every((x) => byId(x.id))) S.session = sess;
+      else if (sess) DB.setMeta('session', null).catch(dbFail);
     } catch (err) {
       document.getElementById('view').innerHTML = `<p class="empty">無法開啟本機資料庫：${esc(err.message || err)}<br>請確認沒有使用無痕模式。</p>`;
       return;

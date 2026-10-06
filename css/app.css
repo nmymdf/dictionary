@@ -1096,3 +1096,46 @@ html:not(.wide) body.focus-mode .start-bar .btn { min-height: 52px; }
 .sync-token input { min-height: 38px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; max-width: 360px; }
 .sync-help summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .sync-help ol { margin: 6px 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+
+/* v1.8：評分後再按「下一題」；複習中點例句的字查意思；複習進行中的回去按鈕 */
+.grade.picked { display: flex; gap: 8px; }
+.grade.picked .next-btn { flex: 1; flex-direction: row; gap: 4px; padding: 4px 8px; font-size: 1.08rem; white-space: nowrap; min-width: 0; }
+.grade.picked .next-btn small { font-size: .8rem; font-weight: 500; opacity: .9; white-space: nowrap; }
+.grade.picked .change-btn { flex: 0 0 auto; width: 64px; }
+html:not(.wide) body.focus-mode .grade.picked .btn { height: 62px; min-height: 62px; }
+
+.pk { cursor: pointer; border-radius: 4px; }
+.pk:active { background: var(--accent-weak); }
+.peek-bg { position: fixed; inset: 0; z-index: 30; background: rgb(0 0 0 / .35); }
+.peek-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 31;
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: 70vh; overflow: auto;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface); border-radius: 20px 20px 0 0;
+  box-shadow: 0 -10px 30px rgb(0 0 0 / .25);
+}
+.peek-head { display: flex; align-items: center; gap: 8px; }
+.peek-word { font-size: 1.5rem; }
+.peek-x { margin-left: auto; }
+.peek-gist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 1.05rem; }
+.peek-gist .pos { color: var(--muted); font-size: .85rem; margin-right: 6px; }
+.peek-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; }
+.peek-btns > span { text-align: center; }
+.peek-btns .btn { min-height: 52px; white-space: nowrap; }
+
+.resume-bar {
+  position: fixed; left: 12px; right: 12px; z-index: 11;
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 20px);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; padding: 8px 14px; border: 0; border-radius: 14px;
+  background: var(--hero); color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  box-shadow: 0 6px 18px rgb(0 0 0 / .2);
+}
+body.has-resume .main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 90px); }
+.wide .resume-bar { left: auto; right: 24px; bottom: 20px; max-width: 360px; }
+.grade.picked .btn.change-btn { flex: 0 0 58px; width: 58px; min-width: 0; padding: 0; }
+.grade.picked .btn.next-btn { padding: 4px 6px; font-size: 1.02rem; overflow: hidden; }
+.grade.picked .next-btn small { font-size: .76rem; }
+.grade.picked .btn.next-btn { flex-direction: column; gap: 0; line-height: 1.2; }
+.grade.picked .btn.change-btn { flex: 0 0 48px; width: 48px; }
