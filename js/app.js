@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.8.2';
+  const APP_VERSION = '1.8.3';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1214,6 +1214,14 @@
 
   // 這一輪的位置存進資料庫：離開、App 被關掉，回來都能接著做
   const sessionLeft = (s) => (s ? s.items.filter((x) => x.result === null).length : 0);
+  // 停在還沒做的卡：先往後找，找不到再從頭找（舊版可能留下跳過的卡）
+  function toUndone(s) {
+    const cur = s.items[s.i];
+    if (cur && cur.result === null) return;
+    let k = s.items.findIndex((x, n) => n > s.i && x.result === null);
+    if (k < 0) k = s.items.findIndex((x) => x.result === null);
+    s.i = k < 0 ? Math.min(Math.max(s.i, 0), s.items.length - 1) : k;
+  }
   function saveSession() {
     const s = S.session;
     const keep = s && sessionLeft(s) ? { ...s, undo: null, pick: null, flipped: false, picked: null, typed: '', day: today() } : null;
@@ -1540,7 +1548,7 @@
     // 剛答完的選擇題（s.picked）要先停在這一題，顯示對錯，等按「下一題」
     if (!s || (!sessionLeft(s) && !s.picked)) { if (s) go('review/result'); else go('review'); return { redirect: true }; }
     // 接著上次做：跳過已經做完的（只在還沒作答時跳）
-    if (!s.picked) while (s.items[s.i] && s.items[s.i].result !== null && s.i < s.items.length - 1) s.i++;
+    if (!s.picked) toUndone(s);
     const it = s.items[s.i]; const e = byId(it.id);
     if (!e) { advance(); return { redirect: true }; }
     return {
@@ -1620,8 +1628,10 @@
   function advance() {
     const s = S.session;
     s.i++; s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; S.peek = null;
+    if (s.i >= s.items.length && !sessionLeft(s)) { s.i = s.items.length - 1; saveSession(); go('review/result'); return; }
+    toUndone(s);
     saveSession();
-    if (s.i >= s.items.length) { s.i = s.items.length - 1; go('review/result'); } else render();
+    render();
   }
   function answerSpell(val) {
     const s = S.session; const it = s.items[s.i]; const e = byId(it.id);
@@ -2465,7 +2475,7 @@
       S.log = log || {};
       S.daily = daily || S.daily;
       // 今天還沒複習完的那一輪：接著做（同一張卡，不重新洗牌）
-      if (sess && sess.day === today() && sess.items && sessionLeft(sess) && sess.items.every((x) => byId(x.id))) S.session = sess;
+      if (sess && sess.day === today() && sess.items && sessionLeft(sess) && sess.items.every((x) => byId(x.id))) { S.session = sess; toUndone(sess); }
       else if (sess) DB.setMeta('session', null).catch(dbFail);
     } catch (err) {
       document.getElementById('view').innerHTML = `<p class="empty">無法開啟本機資料庫：${esc(err.message || err)}<br>請確認沒有使用無痕模式。</p>`;
