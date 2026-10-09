@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.8.1';
+  const APP_VERSION = '1.8.2';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -133,6 +133,7 @@
   const P = {
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
     book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/><path d="M9 7h6"/>',
+    sync: '<path d="M20 12a8 8 0 0 1-14.3 4.9"/><path d="M4 12a8 8 0 0 1 14.3-4.9"/><path d="M18.5 3v4.2h-4.2"/><path d="M5.5 21v-4.2h4.2"/>',
     cards: '<rect x="3" y="7" width="14" height="13" rx="2"/><path d="M7 4h12a2 2 0 0 1 2 2v11"/>',
     more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
     star: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8z"/>',
@@ -2055,8 +2056,10 @@
     const dark = document.documentElement.dataset.theme === 'dark';
     tb.innerHTML = `${v.back ? `<a class="icon-btn" href="${v.back}" aria-label="返回">${ic('back')}</a>` : `<span class="brand-sm"><span class="brand-mark">單</span><span class="brand-text">單字本</span>${brandMeta()}</span>`}
       <h1 class="${v.hideTitle ? 'sr-only' : ''}">${esc(v.title)}</h1>
+      <button class="icon-btn top-sync" data-act="sync-tap" aria-label="同步">${ic('sync')}</button>
       <button class="icon-btn theme-btn" data-act="theme-toggle" aria-label="${dark ? '切換成白底' : '切換成黑底'}">${ic(dark ? 'sun' : 'moon')}</button>`;
     document.title = `${v.title} · 單字本`;
+    syncBtnState();
     document.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('on', a.dataset.tab === v.tab));
     document.body.classList.toggle('focus-mode', !!v.focus);
     const live = S.session && sessionLeft(S.session) ? S.session : null;
@@ -2155,6 +2158,7 @@
     if (!cfg.token) { if (manual) toast('請先貼上通行碼'); return; }
     if (syncing) { syncAgain = true; return; }
     syncing = true;
+    syncBtnState();
     if (manual) toast('同步中…');
     let n = 0;
     try {
@@ -2178,8 +2182,23 @@
     }
     saveSettings();
     syncing = false;
+    syncBtnState();
     if (!/review\/quiz/.test(location.hash) && (n || manual || /settings/.test(location.hash))) render();
     if (syncAgain) { syncAgain = false; scheduleSync(2000); }
+  }
+  // 左邊欄（電腦）和上方（手機）的同步按鈕：轉圈＝同步中，紅點＝上次失敗
+  function syncBtnState() {
+    const cfg = syncCfg();
+    const when = cfg.lastAt ? new Date(cfg.lastAt).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const tip = !cfg.token ? '同步：還沒設定通行碼' : syncing ? '同步中…' : cfg.err ? '上次同步失敗：' + cfg.err : when ? '上次同步：' + when : '同步';
+    document.querySelectorAll('#side-sync, .top-sync').forEach((b) => {
+      b.classList.toggle('busy', syncing);
+      b.classList.toggle('err', !!(cfg.token && cfg.err && !syncing));
+      b.classList.toggle('off', !cfg.token);
+      b.title = tip;
+      const t = b.querySelector('.side-sync-t');
+      if (t) t.textContent = syncing ? '同步中' : '同步';
+    });
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && syncTimer) { clearTimeout(syncTimer); syncNow(); } });
 
@@ -2249,6 +2268,12 @@
     'rv-set': (d) => { S.reviewSetup[d.k] = d.v; S.reviewSetup.open = true; render(); },
     'rv-start': () => startCustom(),
     'sync-now': () => syncNow(true),
+    'sync-tap': () => {
+      if (syncCfg().token) { syncNow(true); return; }
+      toast('請先在這裡貼上通行碼');
+      go('settings');
+      setTimeout(() => document.getElementById('sync-token')?.scrollIntoView({ block: 'center' }), 100);
+    },
     'sync-off': () => { S.settings.sync = { ...syncCfg(), token: '', err: '', lastAt: 0 }; saveSettings(); render(); toast('已停用同步'); },
     'sync-save': () => {
       const t = (document.getElementById('sync-token') || {}).value || '';
