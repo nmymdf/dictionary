@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.8.0';
+  const APP_VERSION = '1.8.1';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1536,8 +1536,10 @@
 
   function viewQuiz() {
     const s = S.session;
-    if (!s || !sessionLeft(s)) { if (s && !sessionLeft(s)) { go('review/result'); } else go('review'); return { redirect: true }; }
-    while (s.items[s.i] && s.items[s.i].result !== null && s.i < s.items.length - 1) s.i++;
+    // 剛答完的選擇題（s.picked）要先停在這一題，顯示對錯，等按「下一題」
+    if (!s || (!sessionLeft(s) && !s.picked)) { if (s) go('review/result'); else go('review'); return { redirect: true }; }
+    // 接著上次做：跳過已經做完的（只在還沒作答時跳）
+    if (!s.picked) while (s.items[s.i] && s.items[s.i].result !== null && s.i < s.items.length - 1) s.i++;
     const it = s.items[s.i]; const e = byId(it.id);
     if (!e) { advance(); return { redirect: true }; }
     return {
