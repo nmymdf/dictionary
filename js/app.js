@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.0';
+  const APP_VERSION = '1.9.1';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -205,16 +205,23 @@
   }
   const zhShort = (e) => (e.type === 'sentence' ? e.zh : e.senses.map((s) => s.zh).join('；'));
 
+  // 字尾變化：e 結尾去 e、y 結尾變 i、重複字尾子音
+  function stemPat(w) {
+    if (/e$/.test(w) && w.length > 3) return reEsc(w.slice(0, -1)) + '[a-z]*';
+    if (/y$/.test(w) && w.length > 3) return reEsc(w.slice(0, -1)) + '[yi][a-z]*';
+    if (/[^aeiou][aeiou][bdgklmnprt]$/.test(w)) return reEsc(w) + w.slice(-1) + '?[a-z]*';
+    return reEsc(w) + '[a-z]*';
+  }
+  // 片語：每個字都可以有字尾變化；be、one's、sb、sth 可以換成實際的字
+  const PHRASE_SLOT = {
+    be: "(?:be|am|is|are|was|were|been|being|(?:is|are|was|were)n(?:'|&#39;|’)t|(?:'|&#39;|’)(?:m|re|s))",   // &#39;：highlight 比對的是跳脫過的文字
+    "one's": "(?:my|your|his|her|its|our|their|one(?:'|&#39;|’)s)",
+    sb: '\\S+', someone: '\\S+', sth: '\\S+', something: '\\S+',
+  };
   function wordRe(word) {
     const w = word.toLowerCase();
-    if (/\s/.test(w)) return new RegExp(`(${reEsc(w).replace(/\\?\s+/g, '\\s+')})`, 'i');
-    // 字尾變化：e 結尾去 e、y 結尾變 i、重複字尾子音
-    let stem = w;
-    if (/e$/.test(w) && w.length > 3) stem = w.slice(0, -1);
-    else if (/y$/.test(w) && w.length > 3) stem = w.slice(0, -1) + '[yi]';
-    else if (/[^aeiou][aeiou][bdgklmnprt]$/.test(w)) stem = reEsc(w) + w.slice(-1) + '?';
-    else stem = reEsc(w);
-    return new RegExp(`\\b(${stem}[a-z]*)`, 'i');
+    if (/\s/.test(w)) return new RegExp(`(${w.split(/\s+/).map((t) => PHRASE_SLOT[t] || stemPat(t)).join('\\s+')})`, 'i');
+    return new RegExp(`\\b(${stemPat(w)})`, 'i');
   }
   function highlight(en, word) {
     const re = new RegExp(wordRe(word).source, 'gi');
