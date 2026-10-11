@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.8.3';
+  const APP_VERSION = '1.9.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -65,6 +65,7 @@
       senses: Array.isArray(e.senses) ? e.senses.filter((s) => s && s.zh) : [],
       zh: e.zh || '',
       examples: Array.isArray(e.examples) ? e.examples.filter((x) => x && x.en) : [],
+      life: Array.isArray(e.life) ? e.life.filter((x) => x && x.en) : [],   // AI 造的生活例句（s：對應第幾個意思）
       forms: e.forms && (e.forms.infl || (e.forms.fam && e.forms.fam.length)) ? { infl: e.forms.infl || '', fam: e.forms.fam || [] } : null,
       notes: Array.isArray(e.notes) ? e.notes : [],
       usage: e.usage || null,
@@ -570,6 +571,8 @@
       <li class="${x.easy ? 'easy' : ''}">${x.easy ? '<span class="easy-tag">生活例句</span>' : ''}<div class="ex-en" lang="en">${highlight(x.en, e.text)} ${speakBtn(x.en, '播放例句')}</div>
       ${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</li>`).join('')}</ul>`;
   }
+  const lifeBlock = (e) => `<ul class="examples">${e.life.map((x) => `
+      <li><div class="ex-en" lang="en">${highlight(x.en, e.text)} ${speakBtn(x.en, '播放例句')}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</li>`).join('')}</ul>`;
   function formsBlock(e) {
     const f = e.forms;
     if (!f) return '';
@@ -1020,7 +1023,8 @@
     const body = e.type === 'word'
       ? `<section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
          ${formsBlock(e)}
-         <section class="block"><h3>例句</h3>${examplesBlock(e)}</section>
+         ${e.life && e.life.length ? `<section class="block"><h3>生活例句</h3>${lifeBlock(e)}</section>` : ''}
+         <section class="block"><h3>${e.life && e.life.length ? '字典和筆記的例句' : '例句'}</h3>${examplesBlock(e)}</section>
          ${notesBlock(e)}
          ${relatedBlock(e)}`
       : `<section class="block"><div class="sent-en" lang="en">${sentenceTokens(e.text)}</div></section>
@@ -1110,12 +1114,17 @@
   /* ---------- 複習 ---------- */
   const KIND = {
     flash: ['閃卡', '看英文想中文，翻面對答案'],
-    reverse: ['反向閃卡', '看中文想英文，比較難，但記得最牢'],
     cloze: ['例句挖空', '從例句選出正確的字'],
+    meaning: ['看英文選中文', '四個中文意思選一個'],
+    sense: ['這句裡是什麼意思', '看例句，選出這個字在句子裡的意思'],
+    tf: ['對或錯', '看英文和中文，判斷對不對'],
     confuse: ['易混淆辨析', '選項只有同組的字，專練分辨'],
-    listen: ['聽發音選字', '聽系統語音，選出聽到的字'],
-    spell: ['拼字', '看中文或聽發音，自己拼出英文'],
+    match: ['配對', '5 個英文配 5 個中文'],
   };
+  const MIX_KINDS = ['flash', 'cloze', 'meaning', 'sense', 'tf'];
+  const zhOf = (e, k = 0) => ((e.senses[k] || e.senses[0] || {}).zh || e.zh || '').trim();
+  // 有這個字的例句：生活例句優先，再來字典／筆記的例句
+  const wordExamples = (e) => [...(e.life || []), ...e.examples].filter((x) => x.en && hasWord(x.en, e.text));
   const GRADES = [['不熟', 'grade-0'], ['記得', 'grade-2'], ['簡單', 'grade-3'], ['很熟', 'grade-4']];
   const LEECH = 4;
 
@@ -1159,17 +1168,12 @@
     return { due, fresh, newLeft, list: [...due, ...fresh] };
   }
 
-  // 題型自動混合：新字先認得 → 例句與辨析 → 熟了改考反向、拼字、聽力
+  // 題型自動混合：新字用閃卡；學過的字在閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯之間輪流；有同組字偶爾考辨析
   function pickKind(e) {
-    const r = e.review;
-    const rnd = Math.random();
-    if (e.type === 'sentence') return !r.reps || rnd < 0.5 ? 'flash' : 'reverse';
-    if (!r.reps) return 'flash';
+    if (e.type === 'sentence' || !e.review.reps) return 'flash';
     const group = e.group && S.groups[e.group] && S.groups[e.group].members.filter((m) => byId(m)).length > 1;
-    if (group && (r.lapses > 0 || rnd < 0.35)) return 'confuse';
-    if (r.s < 4) return rnd < 0.6 ? 'cloze' : 'flash';
-    if (r.s < 15) return ['cloze', 'reverse', 'listen', 'spell'][Math.floor(rnd * 4)];
-    return ['reverse', 'spell', 'listen'][Math.floor(rnd * 3)];
+    if (group && ((e.review.lapses || 0) > 0 || Math.random() < 0.25)) return 'confuse';
+    return MIX_KINDS[Math.floor(Math.random() * MIX_KINDS.length)];
   }
 
   function customPool() {
@@ -1183,33 +1187,69 @@
     if (R.range === 'new') pool = pool.filter((e) => e.src === 'new');
     if (R.range === 'old') pool = pool.filter((e) => e.src === 'import');
     pool = pool.filter(notRare);
-    if (!['flash', 'reverse', 'mix'].includes(R.mode)) pool = pool.filter((e) => e.type === 'word');
+    if (!['flash', 'mix'].includes(R.mode)) pool = pool.filter((e) => e.type === 'word');
     if (R.mode === 'confuse') pool = pool.filter((e) => e.group && S.groups[e.group]);
     return pool;
   }
 
   function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-  function optionsFor(e) {
-    const same = e.group && S.groups[e.group] ? S.groups[e.group].members.filter((m) => m !== e.id).map(byId).filter(Boolean) : [];
+  // 中文意思拆成一段一段（去掉括號裡的說明），用來避免兩個選項意思一樣
+  const zhParts = (z) => z.split(/[；;，,、／/]/).map((t) => t.replace(/[（(][^）)]*[）)]/g, '').trim()).filter(Boolean);
+  // byMeaning：選項是中文意思（看英文選中文、這句裡、對或錯），不放同組的近義字
+  function optionsFor(e, byMeaning) {
+    const same = !byMeaning && e.group && S.groups[e.group] ? S.groups[e.group].members.filter((m) => m !== e.id).map(byId).filter(Boolean) : [];
     const pos = (e.senses[0] || {}).pos;
-    const words = S.entries.filter((x) => x.type === 'word' && !x.temp && x.id !== e.id && !same.includes(x) && !/\s/.test(x.text) === !/\s/.test(e.text));
+    const mine = e.senses.flatMap((x) => zhParts(x.zh || ''));
+    const clash = (x) => {
+      const z = x.senses.flatMap((y) => zhParts(y.zh || ''));
+      if (!z.length) return true;
+      if (!byMeaning) return z.join() === mine.join();
+      return z.some((a) => mine.some((b) => a === b || (a.length > 1 && b.includes(a)) || (b.length > 1 && a.includes(b))))
+        || (e.group && x.group === e.group);
+    };
+    const words = S.entries.filter((x) => x.type === 'word' && !x.temp && x.id !== e.id && !same.includes(x) && !clash(x) && !/\s/.test(x.text) === !/\s/.test(e.text));
     const samePos = words.filter((x) => (x.senses[0] || {}).pos === pos);
     const pickFrom = shuffle(samePos.length >= 6 ? samePos : words).slice(0, 3);
     return shuffle([e, ...same.slice(0, 3), ...pickFrom].slice(0, 4));
   }
 
   function makeItem(e, kind) {
-    const exs = e.examples.filter((x) => hasWord(x.en, e.text));
-    if ((kind === 'cloze' || kind === 'confuse') && !exs.length) kind = e.review.s > 4 ? 'spell' : 'flash';
+    if (e.type === 'sentence') kind = 'flash';
+    const exs = wordExamples(e);
     if (kind === 'confuse' && !(e.group && S.groups[e.group])) kind = 'cloze';
+    if ((kind === 'cloze' || kind === 'confuse' || kind === 'sense') && !exs.length) kind = 'meaning';
+    const easy = exs.filter((x) => (e.life || []).includes(x) || x.easy);
+    let ex = null, sIdx = 0;
+    if (kind === 'sense') {
+      // 要知道例句是哪一個意思：生活例句有標；只有一個意思的字也可以
+      const ok = exs.filter((x) => x.s !== undefined || e.senses.length <= 1);
+      if (ok.length) { ex = ok[Math.floor(Math.random() * ok.length)]; sIdx = ex.s || 0; } else kind = 'cloze';
+    }
+    if (!ex) { const pool = easy.length ? easy : exs; ex = pool.length ? pool[Math.floor(Math.random() * pool.length)] : (e.examples[0] || null); }
     let options = null;
-    if (kind === 'cloze' || kind === 'listen') options = optionsFor(e).map((o) => o.id);
+    if (kind === 'cloze') options = optionsFor(e).map((o) => o.id);
+    if (['meaning', 'sense', 'tf'].includes(kind)) options = optionsFor(e, true).map((o) => o.id);
     if (kind === 'confuse') options = shuffle(S.groups[e.group].members.filter((m) => byId(m))).slice(0, 4);
-    const easy = exs.filter((x) => x.easy);
-    const pool = kind === 'cloze' && easy.length ? easy : exs;
-    const ex = pool.length ? pool[Math.floor(Math.random() * pool.length)] : (e.examples[0] || null);
-    return { id: e.id, kind, options, ex, result: null, next: '', again: false };
+    const it = { id: e.id, kind, options, ex, sIdx, result: null, next: '', again: false };
+    if (kind === 'tf') {
+      const others = options.filter((o) => o !== e.id);
+      it.tfTrue = !others.length || Math.random() < 0.5;
+      it.tfZh = it.tfTrue ? zhOf(e, Math.floor(Math.random() * Math.max(1, e.senses.length))) : zhOf(byId(others[0]));
+      it.options = null;
+    }
+    return it;
+  }
+  // 配對：5 個字一組（最後剩 1 個就併到前一組）
+  function makeMatchItems(list) {
+    const words = list.filter((e) => e.type === 'word');
+    const groups = [];
+    for (let k = 0; k < words.length; k += 5) groups.push(words.slice(k, k + 5));
+    if (groups.length > 1 && groups[groups.length - 1].length < 2) groups[groups.length - 2].push(...groups.pop());
+    return groups.filter((g) => g.length >= 2).map((g) => {
+      const ids = g.map((e) => e.id);
+      return { id: ids[0], kind: 'match', ids, right: shuffle(ids), done: [], missed: [], res: {}, nexts: {}, result: null, next: '', again: false };
+    });
   }
 
   // 這一輪的位置存進資料庫：離開、App 被關掉，回來都能接著做
@@ -1229,8 +1269,9 @@
   }
   function startSession(list, mode, title) {
     if (!list.length) { toast('沒有要複習的字'); return; }
-    S.session = { mode, title, i: 0, flipped: false, picked: null, pick: null, typed: '', items: list.map((e) => makeItem(e, mode === 'mix' ? pickKind(e) : mode)), undo: null };
-    if (mode === 'mix') {
+    S.session = { mode, title, i: 0, flipped: false, picked: null, pick: null, typed: '', items: mode === 'match' ? makeMatchItems(list) : list.map((e) => makeItem(e, mode === 'mix' ? pickKind(e) : mode)), undo: null };
+    if (!S.session.items.length) { S.session = null; toast('配對至少要 2 個單字'); return; }
+    if (mode === 'match') { /* 已經分好組 */ } else if (mode === 'mix') {
       // 新字留在後段，先清到期的；同組的字不要連在一起
       const due = shuffle(S.session.items.filter((x) => byId(x.id).review.reps));
       const fresh = shuffle(S.session.items.filter((x) => !byId(x.id).review.reps));
@@ -1245,6 +1286,7 @@
     return [...shuffle(pool.filter((e) => e.src === 'new')), ...shuffle(pool.filter((e) => e.src !== 'new'))];
   }
   const startExtra = () => startSession(extraPool().slice(0, 10), 'mix', '再練一輪');
+  const startExtraMatch = () => startSession(extraPool().filter((e) => e.type === 'word').slice(0, 10), 'match', '再練一輪（配對）');
   const startToday = () => startSession(todayPlan().list, 'mix', '今天的複習');
   const startCustom = () => {
     const R = S.reviewSetup;
@@ -1308,7 +1350,8 @@
         <button class="btn today-btn" data-act="rv-today">開始今天的複習</button>`
         : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，都完成了` : '今天沒有要複習的字'}</span>
         <span class="today-s">${inR.length ? '想多學一點，可以再練一輪新字。到期的字還是照原本的日子複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>
-        ${extraPool().length ? `<button class="btn today-btn" data-act="rv-extra">再練一輪（${Math.min(10, extraPool().length)} 個新字）</button>` : ''}`}
+        ${extraPool().length ? `<button class="btn today-btn" data-act="rv-extra">再練一輪（${Math.min(10, extraPool().length)} 個新字）</button>` : ''}
+        ${extraPool().filter((e) => e.type === 'word').length >= 2 ? '<button class="btn ghost today-btn" data-act="rv-extra-match">用配對練新字</button>' : ''}`}
       </section>
       <div class="scope-row"><span class="muted small">每天複習的範圍</span>
         <div class="seg small-seg">${[['all', '全部'], ['old', '47 個檔'], ['new', '新查的']].map(([k, t]) => `<button class="${S.settings.reviewScope === k ? 'on' : ''}" data-act="rv-scope" data-s="${k}">${t}</button>`).join('')}</div>
@@ -1367,7 +1410,8 @@
   const kindLabel = (it) => `<p class="q-label">${srcTag(byId(it.id))}<span>${KIND[it.kind][0]}${it.again ? ' · 再考一次' : ''}</span></p>`;
 
   function choiceList(s, it) {
-    return `<div class="choices ${it.options.length === 2 ? 'two' : ''}">${it.options.map((oid) => {
+    const zhMode = it.kind === 'meaning' || it.kind === 'sense';
+    return `<div class="choices ${it.options.length === 2 ? 'two' : ''} ${zhMode ? 'zh-choices' : ''}">${it.options.map((oid, n) => {
       const o = byId(oid);
       let cls = '';
       if (s.picked) {
@@ -1375,8 +1419,10 @@
         else if (oid === s.picked) cls = 'wrong';
         else cls = 'dim';
       }
-      return `<button class="choice ${cls}" data-act="pick" data-id="${esc(oid)}" ${s.picked ? 'disabled' : ''} lang="en">
-        <span>${esc(o.text)}</span>${s.picked ? `<span class="choice-zh">${esc((o.senses[0] || {}).zh || '')} ${usageChip(o.usage)}</span>` : ''}</button>`;
+      const main = zhMode ? (oid === it.id && it.kind === 'sense' ? zhOf(o, it.sIdx) : zhOf(o)) : o.text;
+      const sub = zhMode ? o.text : zhOf(o);
+      return `<button class="choice ${cls}" data-act="pick" data-id="${esc(oid)}" data-n="${n + 1}" ${s.picked ? 'disabled' : ''} ${zhMode ? '' : 'lang="en"'}>
+        <span>${esc(main)}</span>${s.picked ? `<span class="choice-zh" ${zhMode ? 'lang="en"' : ''}>${esc(sub)}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
   const nextBar = (s, ok) => `<div class="start-bar"><span class="${ok ? 'ok-txt' : 'bad-txt'}">${ok ? '答對了' : '答錯了，3 天後會再考'}</span><button class="btn primary" data-act="next" id="next-btn">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>`;
@@ -1435,6 +1481,7 @@
   }
   // 複習翻面：兩句最短的例句（有中文翻譯的優先）
   function shortExamples(e, n = 2) {
+    if (e.life && e.life.length) return e.life.slice(0, n).map((x) => ({ ...x, lifeTag: true }));
     const sorted = e.examples.filter((x) => x.en).slice().sort((a, b) => (b.zh ? 1 : 0) - (a.zh ? 1 : 0) || a.en.length - b.en.length);
     // 幾乎一樣的句子（只差單複數、標點）或中文一樣的，只留一句
     const key = (x) => x.en.toLowerCase().replace(/[^a-z ]/g, '').replace(/s\b/g, '').replace(/\s+/g, ' ').trim();
@@ -1461,7 +1508,7 @@
     }).catch(() => { saveEntry(e); });
   }
   const cardBack = (e) => (e.type === 'word'
-    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x) => `<div class="card-ex"><div class="ex-en small" lang="en">${peekText(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
+    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x, k) => `<div class="card-ex">${x.lifeTag && !k ? '<span class="easy-tag">生活例句</span>' : ''}<div class="ex-en small" lang="en">${peekText(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
     : `<p class="sent-zh">${esc(e.zh)}</p>`) + (e.src === 'new' && e.notes.length ? `<p class="rv-notes">${ic('pen')} ${esc(e.notes.join('；'))}</p>` : '');
 
   const RENDER = {
@@ -1478,19 +1525,6 @@
         ${s.flipped ? `<span class="flash-back">${cardBack(e)}</span>` : ''}
       </div>
       ${gradeBar(s, e)}`;
-    },
-    reverse(s, it, e) {
-      return `
-      <div class="flash ${s.flipped ? 'flipped' : ''}" data-act="flip" role="button" tabindex="0" aria-label="翻面">
-        <span class="flash-front">
-          ${kindLabel(it)}
-          ${e.type === 'word' ? sensesBlock(e) : `<p class="sent-zh">${esc(e.zh)}</p>`}
-          ${usageChip(e.usage)}
-          ${!s.flipped ? `<span class="muted small flip-hint">先在心裡${e.type === 'word' ? '拼出英文' : '用英文說出來'}，再點一下翻面</span>` : ''}
-        </span>
-        ${s.flipped ? `<span class="flash-back center-back"><span class="${e.type === 'word' ? 'headword' : 'flash-sent'}" lang="en">${esc(e.text)}</span>${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${e.type === 'word' && e.examples[0] ? `<span class="ex-en small" lang="en">${peekText(e.examples[0].en, e.text)}</span>` : ''}</span>` : ''}
-      </div>
-      ${s.flipped ? `<div class="center-row">${speakBtn(e.text)}</div>` : ''}${gradeBar(s, e)}`;
     },
     cloze(s, it, e) {
       return `
@@ -1512,36 +1546,56 @@
       ${choiceList(s, it)}
       ${s.picked && (e.related[0] || g.note) ? `<p class="confuse-note">${ic('alert')} ${esc(e.related[0] || g.note)}</p>` : ''}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
-    listen(s, it, e) {
+    meaning(s, it, e) {
       return `
-      <section class="q-card listen">
+      <section class="q-card center-card">
         ${kindLabel(it)}
-        <div class="listen-btns">
-          <button class="play-big" data-act="speak" data-text="${esc(e.text)}" aria-label="播放">${ic('speaker')}</button>
-          <button class="btn small ghost" data-act="speak" data-text="${esc(e.text)}" data-rate="0.6">慢速再聽</button>
-        </div>
+        <span class="headword" lang="en">${esc(e.text)}</span>
+        <span class="ipa-row">${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${speakBtn(e.text, '播放發音', 'card-speak')}</span>
+        ${!s.picked ? '<span class="muted small">選出正確的中文意思</span>' : ''}
       </section>
       ${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
-    spell(s, it, e) {
-      const done = s.picked;
-      const ok = done && s.picked === it.id;
+    sense(s, it, e) {
       return `
       <section class="q-card">
         ${kindLabel(it)}
-        ${sensesBlock(e)}
-        ${it.ex ? `<p class="ex-zh">${esc(it.ex.zh)}</p>` : ''}
-        <div class="listen-btns row">${speakBtn(e.text, '聽發音')}<span class="muted small">可以先聽發音</span></div>
+        <p class="cloze" lang="en">${s.picked ? peekText(it.ex.en, e.text) : highlight(it.ex.en, e.text)}</p>
+        ${s.picked && it.ex.zh ? `<p class="ex-zh">${esc(it.ex.zh)}</p>` : ''}
+        <p class="sense-q">這句裡的 <b lang="en">${esc(e.text)}</b> 是什麼意思？</p>
       </section>
-      <form class="spell-box" id="spell-form">
-        <input id="spell" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="拼出英文（可用 S Pen 手寫）" value="${esc(s.typed)}" ${done ? 'disabled' : ''}>
-        ${done ? '' : '<button class="btn primary" type="submit">確定</button>'}
-      </form>
-      ${done ? `<p class="spell-ans">${ok ? '' : `你寫的：<s lang="en">${esc(s.typed || '（空白）')}</s> → `}正確：<b lang="en">${esc(e.text)}</b></p>
-        ${ok ? '' : '<button class="link" data-act="spell-typo">我其實會，只是打錯字</button>'}
-        ${nextBar(s, ok)}` : '<button class="link" data-act="spell-giveup">不知道，看答案</button>'}`;
+      ${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
+    },
+    tf(s, it, e) {
+      const ok = s.picked === it.id;
+      return `
+      <section class="q-card center-card">
+        ${kindLabel(it)}
+        <span class="headword" lang="en">${esc(e.text)}</span>
+        <span class="tf-eq">＝</span>
+        <span class="tf-zh">${esc(it.tfZh)}</span>
+        ${s.picked ? `<p class="tf-ans">${it.tfTrue ? '這是對的' : `這是錯的，<b lang="en">${esc(e.text)}</b> 是「${esc(zhOf(e))}」`}</p>` : '<span class="muted small">這個意思對嗎？</span>'}
+      </section>
+      ${s.picked ? nextBar(s, ok) : `<div class="choices two tf-btns">
+        <button class="choice tf-yes" data-act="tf" data-v="1" data-n="1"><span>對</span></button>
+        <button class="choice tf-no" data-act="tf" data-v="0" data-n="2"><span>錯</span></button></div>`}`;
+    },
+    match(s, it) {
+      const sel = s.msel || null;
+      const bad = s.mbad || [];
+      const done = (id) => it.done.includes(id);
+      const left = it.ids.map((id) => { const o = byId(id); return `<button class="choice m-l ${done(id) ? 'correct' : ''} ${sel === id ? 'sel' : ''} ${bad[0] === id ? 'wrong' : ''}" data-act="m-left" data-id="${esc(id)}" ${done(id) ? 'disabled' : ''} lang="en"><span>${esc(o.text)}</span></button>`; }).join('');
+      const right = it.right.map((id) => { const o = byId(id); return `<button class="choice m-r ${done(id) ? 'correct' : ''} ${bad[1] === id ? 'wrong' : ''}" data-act="m-right" data-id="${esc(id)}" ${done(id) ? 'disabled' : ''}><span>${esc(zhOf(o))}</span></button>`; }).join('');
+      const fin = it.done.length === it.ids.length;
+      const okN = it.ids.length - it.missed.length;
+      return `
+      <div class="match-hint">${kindLabel(it)}<span class="muted small">${fin ? '完成' : sel ? '再點右邊的中文' : '先點英文，再點對應的中文'}</span></div>
+      <div class="match-grid"><div class="match-col">${left}</div><div class="match-col">${right}</div></div>
+      ${fin ? `<div class="start-bar"><span class="${it.missed.length ? 'bad-txt' : 'ok-txt'}">${it.missed.length ? `一次就配對成功 ${okN}／${it.ids.length} 個，配錯的 3 天後再考` : '全部一次就配對成功'}</span><button class="btn primary" data-act="next" id="next-btn">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>` : ''}`;
     },
   };
+
+  function viewQuiz() {  };
 
   function viewQuiz() {
     const s = S.session;
@@ -1555,12 +1609,6 @@
       title: s.title, tab: 'review', back: '#/review', focus: true,
       html: progress(s) + RENDER[it.kind](s, it, e) + peekSheet(),
       after() {
-        const f = document.getElementById('spell-form');
-        if (f) {
-          const inp = document.getElementById('spell');
-          if (!s.picked) inp.focus();
-          f.addEventListener('submit', (ev) => { ev.preventDefault(); answerSpell(inp.value); });
-        }
         document.getElementById('next-btn')?.focus();
       },
     };
@@ -1571,7 +1619,7 @@
   function viewReviewResult() {
     const s = S.session;
     if (!s || s.items.some((x) => x.result === null)) return viewReviewHome();
-    const firsts = s.items.filter((x) => !x.again);
+    const firsts = flatItems(s);
     const ok = firsts.filter((x) => x.result >= 2).length;
     const label = { 1: ['不熟', 'bad'], 2: ['記得', 'ok'], 3: ['簡單', 'ok'], 4: ['很熟', 'ok'] };
     return {
@@ -1601,16 +1649,35 @@
     it.result = g;
     saveSession();
     if (it.again) return;
+    it.next = applyGrade(e, g);
+    saveSession();
+    scheduleSync();
+  }
+  // 記下一個字的評分，回傳「下次：…」
+  function applyGrade(e, g) {
     const wasNew = !e.review.reps;
     e.review = scheduleFor(e, g);
-    it.next = SRS.fmtDays(e.review.days) + '後';
     if (wasNew) { rollDaily(); S.daily.newDone++; DB.setMeta('daily', S.daily).catch(dbFail); }
     S.log[today()] = (S.log[today()] || 0) + 1;
     DB.setMeta('log', S.log).catch(dbFail);
     saveEntry(e);
+    return SRS.fmtDays(e.review.days) + '後';
+  }
+  // 配對做完：一次就配對成功＝記得；配錯過＝不熟
+  function finishMatch(it) {
+    it.ids.forEach((id) => {
+      const e = byId(id); if (!e) return;
+      const g = it.missed.includes(id) ? 1 : 2;
+      it.res[id] = g; it.nexts[id] = applyGrade(e, g);
+    });
+    it.result = it.missed.length ? 1 : 2;
+    S.session.undo = null;
+    S.session.picked = '__match';   // 停在這一組，等按「下一題」
     saveSession();
     scheduleSync();
   }
+  // 結果頁、再練一次：配對展開成一個字一列
+  const flatItems = (s) => s.items.filter((x) => !x.again).flatMap((x) => (x.kind === 'match' ? x.ids.map((id) => ({ id, kind: 'match', result: x.res[id] || 1, next: x.nexts[id] || '' })) : [x]));
   function undo() {
     const s = S.session; const u = s.undo;
     if (!u) return;
@@ -1627,21 +1694,12 @@
   }
   function advance() {
     const s = S.session;
-    s.i++; s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; S.peek = null;
+    s.i++; s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.msel = null; s.mbad = null; S.peek = null;
     if (s.i >= s.items.length && !sessionLeft(s)) { s.i = s.items.length - 1; saveSession(); go('review/result'); return; }
     toUndone(s);
     saveSession();
     render();
   }
-  function answerSpell(val) {
-    const s = S.session; const it = s.items[s.i]; const e = byId(it.id);
-    s.typed = val.trim();
-    const ok = s.typed.toLowerCase().replace(/\s+/g, ' ') === e.text.toLowerCase();
-    s.picked = ok ? it.id : '__wrong';
-    grade(ok ? 2 : 1);
-    render();
-  }
-
   /* ---------- 匯入合併（JSON 與 Word 共用） ---------- */
   function mergeGroups(incoming) {
     // 回傳 舊 id → 新 id 的對照
@@ -1688,6 +1746,19 @@
     return true;
   }
 
+  // 生活例句檔：只把例句加到對應的字，不動複習進度
+  function importLife(data) {
+    const changed = [];
+    Object.entries(data.items || {}).forEach(([id, list]) => {
+      const e = byId(id);
+      if (!e || !Array.isArray(list)) return;
+      e.life = list.filter((x) => x && x.en).map((x) => ({ en: x.en, zh: x.zh || '', ...(Number.isInteger(x.s) ? { s: x.s } : {}) }));
+      changed.push(e);
+    });
+    if (changed.length) saveEntries(changed);
+    toast(changed.length ? `加入了 ${changed.length} 個字的生活例句` : '這個檔案裡的字，這台裝置都沒有');
+    render();
+  }
   async function importData(data, strategy) {
     const gmap = mergeGroups(data.groups);
     let added = 0, updated = 0;
@@ -1821,7 +1892,8 @@
         <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」直接排到 30 天後。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
         <p>選好按鈕後，要再按「下一題」才會換卡；按錯了可以按「改」重選（電腦可以按 1–4 選、Enter 下一題）。複習到一半離開，下次打開會出現「繼續剛才的複習」，從同一張卡接著做。手機翻面後可以點例句裡的字，跳出小視窗看意思；電腦直接用左邊的「查詢」，再按「複習」就回到同一張卡。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
-        <p>題型會自動從「認得」進到「會用」：閃卡 → 例句挖空、易混淆辨析 → 反向閃卡、拼字、聽力。</p>
+        <p>題型：新字用閃卡；學過的字輪流出閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯；有同組字的偶爾出易混淆辨析。做完今天的複習，可以用「配對」練新字。不考拼字，也不考聽發音。</p>
+        <p>生活例句：在「更多 → 匯出 / 匯入 JSON」選生活例句檔（danciben-life.json），每個字會加上兩句日常會用的例句，複習卡片優先顯示。</p>
         <p>複習頁可以選每天複習的範圍：全部、只練 47 個檔、只練新查的。每張卡片角落都有標籤，看得出是哪一種。</p>
         <p>常忘記的字會被列為「頑固字」，可以專門練，也可以到單字詳情編輯，加上自己的聯想。</p>
       </section>
@@ -1946,6 +2018,7 @@
           if (!f) return;
           try {
             const data = JSON.parse(await f.text());
+            if (data && data.app === 'danciben-life') { inp.value = ''; importLife(data); return; }
             if (!data || !Array.isArray(data.entries)) throw new Error('不是單字本的 JSON 檔');
             B.parsed = data; B.file = f.name; B.error = '';
           } catch (err) { B.error = '無法讀取：' + err.message; }
@@ -2295,7 +2368,8 @@
     'rv-leech': () => startSession(shuffle(S.entries.filter(isLeech)).slice(0, 30), 'mix', '頑固字特訓'),
     'rv-retry': () => {
       const s = S.session;
-      startSession(s.items.filter((x) => !x.again && x.result < 3).map((x) => byId(x.id)).filter(Boolean), s.mode === 'mix' ? 'mix' : s.mode, s.title);
+      const again = flatItems(s).filter((x) => x.result < 3).map((x) => byId(x.id)).filter(Boolean);
+      startSession(again, s.mode === 'match' && again.length < 2 ? 'mix' : s.mode, s.title);
     },
     flip: () => { if (!S.session.flipped) { S.session.flipped = true; render(); } },
     grade: (d) => { S.session.pick = Number(d.g); render(); },
@@ -2317,20 +2391,28 @@
       if (s.picked) return;
       s.picked = d.id;
       grade(d.id === it.id ? 3 : 1);
-      if (it.kind === 'listen' || d.id !== it.id) speak(byId(it.id).text);
       render();
     },
+    tf: (d) => {
+      const s = S.session; const it = s.items[s.i];
+      if (s.picked) return;
+      const ok = (d.v === '1') === it.tfTrue;
+      s.picked = ok ? it.id : '__wrong';
+      grade(ok ? 2 : 1);
+      render();
+    },
+    'm-left': (d) => { const s = S.session; s.msel = d.id; s.mbad = null; render(); },
+    'm-right': (d) => {
+      const s = S.session; const it = s.items[s.i];
+      if (!s.msel || it.result !== null) return;
+      if (s.msel === d.id) { it.done.push(d.id); s.mbad = null; } else { if (!it.missed.includes(s.msel)) it.missed.push(s.msel); s.mbad = [s.msel, d.id]; }
+      s.msel = null;
+      if (it.done.length === it.ids.length) finishMatch(it); else saveSession();
+      render();
+    },
+    'rv-extra-match': () => startExtraMatch(),
     next: () => advance(),
     undo: () => undo(),
-    'spell-giveup': () => answerSpell(''),
-    'spell-typo': () => {
-      const s = S.session; const it = s.items[s.i];
-      const typed = s.typed;
-      undo();
-      S.session.typed = typed; S.session.picked = it.id;
-      grade(2);
-      render();
-    },
     install: async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); },
     'imp-reset': () => { S.imp = { step: 1, files: [], parsed: null, error: '' }; render(); },
     'imp-go': async () => {
@@ -2396,6 +2478,7 @@
     const s = S.session;
     if ((ev.key === ' ' || ev.key === 'Enter') && !s.flipped && document.querySelector('.flash')) { ev.preventDefault(); actions.flip(); }
     else if (/^[1-4]$/.test(ev.key) && s.flipped) { s.pick = Number(ev.key); render(); }
+    else if (/^[1-4]$/.test(ev.key) && !s.picked && document.querySelector(`.choices [data-n="${ev.key}"]:not([disabled])`)) document.querySelector(`.choices [data-n="${ev.key}"]`).click();
     else if (ev.key === 'Enter' && s.pick) { ev.preventDefault(); actions['grade-next'](); }
     else if (ev.key === 'Enter' && s.picked) { ev.preventDefault(); advance(); }
   });
@@ -2475,7 +2558,7 @@
       S.log = log || {};
       S.daily = daily || S.daily;
       // 今天還沒複習完的那一輪：接著做（同一張卡，不重新洗牌）
-      if (sess && sess.day === today() && sess.items && sessionLeft(sess) && sess.items.every((x) => byId(x.id))) { S.session = sess; toUndone(sess); }
+      if (sess && sess.day === today() && sess.items && sessionLeft(sess) && sess.items.every((x) => byId(x.id) && KIND[x.kind])) { S.session = sess; toUndone(sess); }
       else if (sess) DB.setMeta('session', null).catch(dbFail);
     } catch (err) {
       document.getElementById('view').innerHTML = `<p class="empty">無法開啟本機資料庫：${esc(err.message || err)}<br>請確認沒有使用無痕模式。</p>`;

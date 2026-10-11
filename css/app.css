@@ -1166,3 +1166,26 @@ html:not(.wide) .topbar .top-sync, html:not(.wide) .topbar .theme-btn { width: 3
 html:not(.wide) .topbar { gap: 2px; }
 html:not(.wide) .topbar .brand-sm { min-width: 0; overflow: hidden; }
 html:not(.wide) .topbar .brand-meta { flex-direction: column; gap: 0; align-items: flex-start; line-height: 1.25; }
+
+/* v1.9：新題型（看英文選中文、這句裡是什麼意思、對或錯、配對） */
+.q-card.center-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+.zh-choices .choice > span:first-child { font-family: var(--font-ui); font-size: 1.05rem; }
+.zh-choices .choice-zh { font-family: var(--font-word); font-size: .9rem; }
+.sense-q { margin: 8px 0 0; font-size: 1.05rem; }
+.tf-eq { color: var(--muted); font-size: 1.2rem; line-height: 1; }
+.tf-zh { font-size: 1.35rem; font-weight: 700; }
+.tf-ans { margin: 6px 0 0; font-weight: 600; }
+.tf-btns .choice { min-height: 64px; font-size: 1.2rem; font-weight: 700; }
+.tf-btns .tf-yes { color: var(--ok); }
+.tf-btns .tf-no { color: var(--bad); }
+.match-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.match-col { display: flex; flex-direction: column; gap: 8px; }
+.match-col .choice { min-height: 52px; padding: 8px 6px; }
+.match-col .choice.sel { border-color: var(--accent); background: var(--accent-weak); box-shadow: 0 0 0 2px var(--accent); }
+.match-col .choice.correct { opacity: .7; }
+.card-ex .easy-tag { display: inline-block; margin-bottom: 2px; }
+.match-hint { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.match-hint .q-label { margin: 0; }
+.match-col .choice { min-height: 46px; padding: 6px 6px; font-size: .95rem; line-height: 1.25; }
+.match-col .m-r span { font-size: .9rem; }
+.start-bar .btn { white-space: nowrap; }
