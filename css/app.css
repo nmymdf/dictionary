@@ -1189,3 +1189,4 @@ html:not(.wide) .topbar .brand-meta { flex-direction: column; gap: 0; align-item
 .match-col .choice { min-height: 46px; padding: 6px 6px; font-size: .95rem; line-height: 1.25; }
 .match-col .m-r span { font-size: .9rem; }
 .start-bar .btn { white-space: nowrap; }
+.easy-tag.dict-tag { color: var(--muted); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }

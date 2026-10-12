@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.2';
+  const APP_VERSION = '1.9.3';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1487,8 +1487,17 @@
     return esc(it.ex.en).replace(new RegExp(re.source, 'i'), () => '<span class="blank">＿＿＿＿</span>');
   }
   // 複習翻面：兩句最短的例句（有中文翻譯的優先）
+  // 卡片例句：有生活例句就放 2 句生活例句 + 1 句字典（或筆記）最短的例句
   function shortExamples(e, n = 2) {
-    if (e.life && e.life.length) return e.life.slice(0, n).map((x) => ({ ...x, lifeTag: true }));
+    if (e.life && e.life.length) {
+      const life = e.life.slice(0, 2).map((x) => ({ ...x, lifeTag: true }));
+      const seen = new Set(life.map((x) => x.en.toLowerCase()));
+      const dict = dictExamples(e, 1).filter((x) => !seen.has(x.en.toLowerCase())).map((x) => ({ ...x, dictTag: true }));
+      return [...life, ...dict];
+    }
+    return dictExamples(e, n);
+  }
+  function dictExamples(e, n) {
     const sorted = e.examples.filter((x) => x.en).slice().sort((a, b) => (b.zh ? 1 : 0) - (a.zh ? 1 : 0) || a.en.length - b.en.length);
     // 幾乎一樣的句子（只差單複數、標點）或中文一樣的，只留一句
     const key = (x) => x.en.toLowerCase().replace(/[^a-z ]/g, '').replace(/s\b/g, '').replace(/\s+/g, ' ').trim();
@@ -1498,7 +1507,8 @@
   }
   // 例句不到兩句的字，從 Yahoo 字典補一句短的，存起來（只試一次）
   function ensureExamples(e) {
-    if (e.type !== 'word' || shortExamples(e).length >= 2 || e.exTried || !(window.Yahoo && Yahoo.canFetch())) return;
+    const want = e.life && e.life.length ? 1 : 2;   // 有生活例句時，只要再一句字典例句
+    if (e.type !== 'word' || dictExamples(e, 2).length >= want || e.exTried || !(window.Yahoo && Yahoo.canFetch())) return;
     e.exTried = true;
     Yahoo.lookup(e.text).then((d) => {
       if (!d) return;
@@ -1508,14 +1518,14 @@
         if (ex.en && ex.zh && !have.has(ex.en.toLowerCase()) && hasWord(ex.en, e.text)) more.push(ex);
       })));
       more.sort((a, b) => a.en.length - b.en.length);
-      e.examples.push(...more.slice(0, Math.max(0, 2 - shortExamples(e).length)));
+      e.examples.push(...more.slice(0, Math.max(0, want - dictExamples(e, 2).length)));
       saveEntry(e);
       const s = S.session;
       if (location.hash === '#/review/quiz' && s && s.items[s.i] && s.items[s.i].id === e.id) render();
     }).catch(() => { saveEntry(e); });
   }
   const cardBack = (e) => (e.type === 'word'
-    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x, k) => `<div class="card-ex">${x.lifeTag && !k ? '<span class="easy-tag">生活例句</span>' : ''}<div class="ex-en small" lang="en">${peekText(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
+    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x, k) => `<div class="card-ex">${x.lifeTag && !k ? '<span class="easy-tag">生活例句</span>' : x.dictTag ? '<span class="easy-tag dict-tag">字典例句</span>' : ''}<div class="ex-en small" lang="en">${peekText(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
     : `<p class="sent-zh">${esc(e.zh)}</p>`) + (e.src === 'new' && e.notes.length ? `<p class="rv-notes">${ic('pen')} ${esc(e.notes.join('；'))}</p>` : '');
 
   const RENDER = {
