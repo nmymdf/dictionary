@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.1';
+  const APP_VERSION = '1.9.2';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1754,16 +1754,26 @@
   }
 
   // 生活例句檔：只把例句加到對應的字，不動複習進度
-  function importLife(data) {
+  // 生活例句存一份在這台裝置（之後新同步進來的字也能套上）
+  let lifeItems = {};
+  const cleanLife = (list) => list.filter((x) => x && x.en).map((x) => ({ en: x.en, zh: x.zh || '', ...(Number.isInteger(x.s) ? { s: x.s } : {}) }));
+  // all：檔案有變就全部覆蓋；否則只補還沒有生活例句的字
+  function applyLife(items, all) {
     const changed = [];
-    Object.entries(data.items || {}).forEach(([id, list]) => {
+    Object.entries(items || {}).forEach(([id, list]) => {
       const e = byId(id);
-      if (!e || !Array.isArray(list)) return;
-      e.life = list.filter((x) => x && x.en).map((x) => ({ en: x.en, zh: x.zh || '', ...(Number.isInteger(x.s) ? { s: x.s } : {}) }));
-      changed.push(e);
+      if (!e || !Array.isArray(list) || (!all && e.life && e.life.length)) return;
+      e.life = cleanLife(list);
+      if (e.life.length) changed.push(e);
     });
     if (changed.length) saveEntries(changed);
-    toast(changed.length ? `加入了 ${changed.length} 個字的生活例句` : '這個檔案裡的字，這台裝置都沒有');
+    return changed.length;
+  }
+  function importLife(data) {
+    lifeItems = { ...lifeItems, ...(data.items || {}) };
+    DB.setMeta('lifeItems', lifeItems).catch(dbFail);
+    const n = applyLife(data.items, true);
+    toast(n ? `加入了 ${n} 個字的生活例句` : '這個檔案裡的字，這台裝置都沒有');
     render();
   }
   async function importData(data, strategy) {
@@ -2186,6 +2196,21 @@
     });
     return r;
   }
+  // 生活例句檔（Claude 補好例句會放在這裡）：有更新才下載
+  // 放在 Claude 的工作分支（Claude 只寫這個分支，不動 main）
+  const LIFE_PATH = 'sync/danciben-life.json?ref=' + encodeURIComponent('claude/epic-shannon-lmuump');
+  async function syncLife(cfg) {
+    const r = await fetch(`https://api.github.com/repos/${cfg.repo}/contents/${LIFE_PATH}`, {
+      headers: { Authorization: 'Bearer ' + cfg.token, Accept: 'application/vnd.github.raw+json', ...(cfg.lifeTag ? { 'If-None-Match': cfg.lifeTag } : {}) },
+      cache: 'no-store',
+    });
+    if (r.status === 304 || !r.ok) return { n: applyLife(lifeItems, false), tag: cfg.lifeTag || '' };
+    const data = await r.json();
+    if (!data || data.app !== 'danciben-life') return { n: 0, tag: cfg.lifeTag || '' };
+    lifeItems = data.items || {};
+    DB.setMeta('lifeItems', lifeItems).catch(dbFail);
+    return { n: applyLife(lifeItems, true), tag: r.headers.get('ETag') || '' };
+  }
   async function syncGet(cfg) {
     const r = await gh(cfg, 'GET');
     if (r.status === 404) return { data: null, sha: null };
@@ -2264,7 +2289,9 @@
         try { why = (await r.json()).message || ''; } catch (e) { /* 沒有說明 */ }
         throw new Error((r.status === 401 ? '通行碼不對（401）' : r.status === 403 ? '沒有寫入權限（403）' : r.status === 404 ? '找不到 vocab-files，通行碼沒有選到這個資料夾（404）' : 'GitHub 回應 ' + r.status) + (why ? '：' + why : ''));
       }
-      S.settings.sync = { ...cfg, lastAt: Date.now(), err: '' };
+      let lifeTag = cfg.lifeTag || '';
+      try { const L = await syncLife(cfg); n += L.n; lifeTag = L.tag; } catch (e) { /* 例句下次再抓 */ }
+      S.settings.sync = { ...cfg, lastAt: Date.now(), err: '', lifeTag };
       if (manual) toast(n ? `同步完成，更新了 ${n} 筆` : '同步完成，兩邊一致');
     } catch (err) {
       S.settings.sync = { ...cfg, err: navigator.onLine === false ? '沒有網路' : String(err && err.message || err) };
@@ -2364,7 +2391,7 @@
       go('settings');
       setTimeout(() => document.getElementById('sync-token')?.scrollIntoView({ block: 'center' }), 100);
     },
-    'sync-off': () => { S.settings.sync = { ...syncCfg(), token: '', err: '', lastAt: 0 }; saveSettings(); render(); toast('已停用同步'); },
+    'sync-off': () => { S.settings.sync = { ...syncCfg(), token: '', err: '', lastAt: 0, lifeTag: '' }; saveSettings(); render(); toast('已停用同步'); },
     'sync-save': () => {
       const t = (document.getElementById('sync-token') || {}).value || '';
       if (!/^(github_pat_|ghp_)\w{20,}/.test(t.trim())) { toast('通行碼看起來不對，應該是 github_pat_ 開頭的一長串'); return; }
@@ -2506,6 +2533,7 @@
         DB.getMeta('recent'), DB.getMeta('dictCache'),
       ]);
       S.tomb = (await DB.getMeta('tomb')) || {};
+      lifeItems = (await DB.getMeta('lifeItems')) || {};
       const sess = await DB.getMeta('session');
       // 舊版：查過的字會自動存進單字庫。現在只有按「加入複習」才保存，
       // 所以舊的查詢紀錄：有加星號的搬到「新查的」，沒加的移除（只留在最近查過）。
