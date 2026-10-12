@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.3';
+  const APP_VERSION = '1.9.4';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -847,6 +847,7 @@
         ${gist.length ? `<ul class="gist">${gist.map((g) => `<li>${g.pos ? `<span class="pos">${esc(g.pos)}</span>` : ''}<span>${zhq ? enPicks(g.zh) : esc(g.zh)}</span></li>`).join('')}</ul>` : ''}
         ${zhq ? (gist.length ? '<p class="rv-hint">點英文字可以看那個字的解釋，再加入複習</p>' : '') : (d || e ? reviewBtn(key, e) : '')}
       </header>
+      ${e && e.life && e.life.length ? `<section class="block"><h3>生活例句</h3>${lifeBlock(e)}</section>` : ''}
       ${e && e.src === 'import' ? noteCard(e) : ''}
       ${dict}
       ${mine.length ? `<section class="block"><h3>你的單字簿裡意思相符的字</h3><ul class="list">${mine.map((x) => entryRow(x)).join('')}</ul></section>` : ''}`;
