@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.5';
+  const APP_VERSION = '1.9.6';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -440,7 +440,8 @@
       entries: r.examples.length ? [{ pos: '', posName: '例句', senses: [{ text: '', examples: r.examples }] }] : [],
     };
   }
-  async function fetchWord(word) {
+  // quiet：複習時查的，不放進「最近查過」
+  async function fetchWord(word, quiet) {
     const key = wordKey(word);
     const t0 = performance.now();
     S.dict[key] = { status: 'loading' };
@@ -453,7 +454,7 @@
     const ms = Math.round(performance.now() - t0);
     if (data) {
       S.dict[key] = { status: 'ok', data, ms };
-      addRecent(key, word, 'w', gistShort(data));
+      if (!quiet) addRecent(key, word, 'w', gistShort(data));
       const e = byId(key);
       if (e && e.src === 'new' && !e.dict) { e.dict = data; saveEntry(e); }
     } else {
@@ -1273,7 +1274,7 @@
   }
   function saveSession() {
     const s = S.session;
-    const keep = s && sessionLeft(s) ? { ...s, undo: null, pick: null, flipped: false, picked: null, typed: '', day: today() } : null;
+    const keep = s && sessionLeft(s) ? { ...s, undo: null, pick: null, flipped: false, picked: null, typed: '', detail: false, day: today() } : null;
     DB.setMeta('session', keep).catch(dbFail);
   }
   function startSession(list, mode, title) {
@@ -1614,7 +1615,28 @@
     },
   };
 
-  function viewQuiz() {  };
+  // 答完（閃卡是翻面後）可以展開「詳細資料」：跟查詢頁一樣的內容
+  function quizDetail(s, it, e) {
+    const answered = it.kind === 'flash' ? s.flipped : !!s.picked;
+    if (!answered || it.kind === 'match') return '';
+    if (!s.detail) return '<div class="detail-row"><button class="btn ghost detail-btn" data-act="detail-open">看詳細資料 ▼</button></div>';
+    let body;
+    if (e.type === 'word') {
+      const st = S.dict[wordKey(e.text)];
+      const d = st && st.status === 'ok' ? st.data : (e.dict && e.dict.gist ? e.dict : null);
+      const dict = d ? dictHtml(d, e.text, 0) + sideHtml(d)
+        : st && st.status === 'loading' ? loadingBox('正在查 Yahoo 字典…')
+        : st && st.status === 'error' ? `<p class="muted small">Yahoo 字典：${esc(st.msg)}</p>` : '';
+      body = `<section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
+        ${e.life && e.life.length ? `<section class="block"><h3>生活例句</h3>${lifeBlock(e)}</section>` : ''}
+        ${formsBlock(e)}
+        ${e.examples.length ? `<section class="block"><h3>筆記和字典的例句</h3>${examplesBlock(e, 4)}</section>` : ''}
+        ${relatedBlock(e)}${notesBlock(e)}${dict}`;
+    } else {
+      body = `<section class="block"><h3>中文翻譯</h3><p class="sent-zh">${esc(e.zh)}</p></section>${notesBlock(e)}`;
+    }
+    return `<section class="quiz-detail"><div class="detail-row"><button class="btn ghost detail-btn" data-act="detail-close">收起詳細資料 ▲</button></div>${body}</section>`;
+  }
 
   function viewQuiz() {
     const s = S.session;
@@ -1626,7 +1648,7 @@
     if (!e) { advance(); return { redirect: true }; }
     return {
       title: s.title, tab: 'review', back: '#/review', focus: true,
-      html: progress(s) + RENDER[it.kind](s, it, e) + peekSheet(),
+      html: progress(s) + RENDER[it.kind](s, it, e) + quizDetail(s, it, e) + peekSheet(),
       after() {
         document.getElementById('next-btn')?.focus();
       },
@@ -1706,14 +1728,14 @@
     S.log[today()] = u.log; DB.setMeta('log', S.log).catch(dbFail);
     s.items.length = u.len;
     s.i = u.i; s.items[s.i].result = u.result; s.items[s.i].next = u.next;
-    s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.undo = null;
+    s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.undo = null; s.detail = false;
     saveSession();
     if (location.hash !== '#/review/quiz') go('review/quiz'); else render();
     toast('已復原上一題');
   }
   function advance() {
     const s = S.session;
-    s.i++; s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.msel = null; s.mbad = null; S.peek = null;
+    s.i++; s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.msel = null; s.mbad = null; s.detail = false; S.peek = null;
     if (s.i >= s.items.length && !sessionLeft(s)) { s.i = s.items.length - 1; saveSession(); go('review/result'); return; }
     toUndone(s);
     saveSession();
@@ -2431,6 +2453,17 @@
     'peek-close': () => { S.peek = null; render(); },
     'peek-add': () => { if (!S.peek) return; addToReview(wordKey(S.peek)); render(); },
     'rv-resume': () => go('review/quiz'),
+    'detail-open': () => {
+      const s = S.session; if (!s) return;
+      s.detail = true;
+      const e = byId(s.items[s.i].id);
+      const st = e && e.type === 'word' ? S.dict[wordKey(e.text)] : null;
+      if (e && e.type === 'word' && (!st || st.status === 'error') && !(e.dict && e.dict.gist)) {
+        fetchWord(e.text, true).then(() => { if (S.session === s && s.detail && location.hash === '#/review/quiz') render(); });
+      }
+      render();
+    },
+    'detail-close': () => { if (S.session) { S.session.detail = false; render(); } },
     'grade-next': () => { const s = S.session; if (!s || !s.pick) return; grade(s.pick); advance(); },
     pick: (d) => {
       const s = S.session; const it = s.items[s.i];

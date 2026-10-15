@@ -1190,3 +1190,9 @@ html:not(.wide) .topbar .brand-meta { flex-direction: column; gap: 0; align-item
 .match-col .m-r span { font-size: .9rem; }
 .start-bar .btn { white-space: nowrap; }
 .easy-tag.dict-tag { color: var(--muted); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+
+/* v1.9.6：複習答完可以展開詳細資料 */
+.detail-row { display: flex; justify-content: center; margin: 12px 0 4px; }
+.detail-btn { min-height: 46px; padding-inline: 20px; }
+.quiz-detail { margin-top: 4px; }
+.quiz-detail .block { margin-top: 14px; }
