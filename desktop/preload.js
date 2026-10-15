@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('DesktopApp', {
   fetchText: (url) => ipcRenderer.invoke('fetch-text', url),
   fetchAudio: (url) => ipcRenderer.invoke('fetch-audio', url),
   setDark: (dark) => ipcRenderer.send('set-dark', !!dark),
+  appReady: () => ipcRenderer.send('app-ready'),
 });

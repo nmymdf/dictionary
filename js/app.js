@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.6';
+  const APP_VERSION = '1.9.7';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -573,14 +573,14 @@
     if (!e.senses.length) return '<p class="muted">（沒有中文意思）</p>';
     return `<ol class="senses">${e.senses.map((s) => `<li><span class="pos">${esc(s.pos)}</span><span>${esc(s.zh)} ${usageChip(s.u)}</span></li>`).join('')}</ol>`;
   }
-  function examplesBlock(e, limit) {
-    const list = limit ? e.examples.slice(0, limit) : e.examples;
+  function examplesBlock(e, limit, all = e.examples) {
+    const list = limit ? all.slice(0, limit) : all;
     if (!list.length) return '<p class="muted small">（沒有例句）</p>';
     return `<ul class="examples">${list.map((x) => `
       <li class="${x.easy ? 'easy' : ''}">${x.easy ? '<span class="easy-tag">生活例句</span>' : ''}<div class="ex-en" lang="en">${highlight(x.en, e.text)} ${speakBtn(x.en, '播放例句')}</div>
       ${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</li>`).join('')}</ul>`;
   }
-  const lifeBlock = (e) => `<ul class="examples">${e.life.map((x) => `
+  const lifeBlock = (e, list = e.life) => `<ul class="examples">${list.map((x) => `
       <li><div class="ex-en" lang="en">${highlight(x.en, e.text)} ${speakBtn(x.en, '播放例句')}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</li>`).join('')}</ul>`;
   function formsBlock(e) {
     const f = e.forms;
@@ -1615,22 +1615,25 @@
     },
   };
 
-  // 答完（閃卡是翻面後）可以展開「詳細資料」：跟查詢頁一樣的內容
+  // 測驗題答完可以展開「詳細資料」：跟查詢頁一樣的內容
   function quizDetail(s, it, e) {
-    const answered = it.kind === 'flash' ? s.flipped : !!s.picked;
-    if (!answered || it.kind === 'match') return '';
+    // 畫面上已經有的不再重複：閃卡翻面本來就有意思和例句，所以只有測驗題答完才有
+    if (it.kind === 'flash' || it.kind === 'match' || !s.picked) return '';
+    const shown = (x) => it.ex && x.en === it.ex.en;   // 題目用的那一句已經在畫面上
     if (!s.detail) return '<div class="detail-row"><button class="btn ghost detail-btn" data-act="detail-open">看詳細資料 ▼</button></div>';
     let body;
     if (e.type === 'word') {
       const st = S.dict[wordKey(e.text)];
       const d = st && st.status === 'ok' ? st.data : (e.dict && e.dict.gist ? e.dict : null);
+      const life = (e.life || []).filter((x) => !shown(x));
+      const exs = e.examples.filter((x) => !shown(x));
       const dict = d ? dictHtml(d, e.text, 0) + sideHtml(d)
         : st && st.status === 'loading' ? loadingBox('正在查 Yahoo 字典…')
         : st && st.status === 'error' ? `<p class="muted small">Yahoo 字典：${esc(st.msg)}</p>` : '';
       body = `<section class="block"><h3>意思</h3>${sensesBlock(e)}</section>
-        ${e.life && e.life.length ? `<section class="block"><h3>生活例句</h3>${lifeBlock(e)}</section>` : ''}
+        ${life.length ? `<section class="block"><h3>生活例句</h3>${lifeBlock(e, life)}</section>` : ''}
         ${formsBlock(e)}
-        ${e.examples.length ? `<section class="block"><h3>筆記和字典的例句</h3>${examplesBlock(e, 4)}</section>` : ''}
+        ${exs.length ? `<section class="block"><h3>筆記和字典的例句</h3>${examplesBlock(e, 4, exs)}</section>` : ''}
         ${relatedBlock(e)}${notesBlock(e)}${dict}`;
     } else {
       body = `<section class="block"><h3>中文翻譯</h3><p class="sent-zh">${esc(e.zh)}</p></section>${notesBlock(e)}`;
@@ -2666,8 +2669,10 @@
       }
     } catch (err) { /* 忽略 */ }
     if (syncCfg().token) setTimeout(() => syncNow(), 1500);
-    if (/^#[a-z]/.test(location.hash)) { location.hash = '#/' + location.hash.slice(1); return; }
-    render();
+    if (/^#[a-z]/.test(location.hash)) location.hash = '#/' + location.hash.slice(1);
+    else render();
+    // 電腦版：畫面真的畫好了，才讓視窗出現
+    requestAnimationFrame(() => requestAnimationFrame(() => { try { window.DesktopApp?.appReady?.(); } catch (err) { /* 舊版沒有 */ } }));
   }
 
   // 內建的單字簿有更新時（例如修正「相關說明」），只更新筆記內容，不動複習進度
