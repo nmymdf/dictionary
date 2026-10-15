@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.4';
+  const APP_VERSION = '1.9.5';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -358,6 +358,7 @@
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = dark ? '#121816' : '#f7f8f6';
     try { NATIVE?.setDark(dark); } catch (err) { /* 舊版 App 沒有這個功能 */ }
+    try { window.DesktopApp?.setDark?.(dark); } catch (err) { /* 舊版沒有 */ }
   }
   darkMQ.addEventListener?.('change', applyTheme);
   // 放大後實際可用的寬度很窄時，改用更精簡的排版

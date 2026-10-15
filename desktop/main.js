@@ -1,24 +1,41 @@
 // 單字本 Windows 版：把網頁版包成桌面程式（資料存在這台電腦）
 const { app, BrowserWindow, shell, ipcMain, net } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const https = require('https');
 
 app.setAppUserModelId('tw.archiekuo.danciben');
 let win = null;
 
+// 記住上次是黑底還是白底：視窗一開始就用同樣的底色，不會先閃白
+const themeFile = () => path.join(app.getPath('userData'), 'theme.json');
+const BG = { dark: '#121816', light: '#f7f8f6' };
+function savedDark() { try { return !!JSON.parse(fs.readFileSync(themeFile(), 'utf8')).dark; } catch (e) { return false; } }
+ipcMain.on('set-dark', (ev, dark) => {
+  try { fs.writeFileSync(themeFile(), JSON.stringify({ dark })); } catch (e) { /* 沒關係 */ }
+  if (win) win.setBackgroundColor(dark ? BG.dark : BG.light);
+});
+
 function createWindow() {
   win = new BrowserWindow({
+    show: false,
     width: 1200,
     height: 900,
     minWidth: 380,
     minHeight: 520,
     title: '單字本',
     autoHideMenuBar: true,
-    backgroundColor: '#f7f8f6',
+    backgroundColor: savedDark() ? BG.dark : BG.light,
     icon: path.join(__dirname, 'www', 'icons', 'icon-512.png'),
     webPreferences: { spellcheck: false, preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
-  if (SELFTEST) win.hide(); else win.maximize();
+  // 畫面畫好才顯示（不會先看到空白視窗）；萬一太久，1.5 秒後也顯示
+  if (!SELFTEST) {
+    let shown = false;
+    const show = () => { if (shown || !win) return; shown = true; win.maximize(); win.show(); };
+    win.once('ready-to-show', show);
+    setTimeout(show, 1500);
+  }
   win.loadFile(path.join(__dirname, 'www', 'index.html'));
   if (SELFTEST) win.webContents.once('did-finish-load', () => setTimeout(runSelftest, 3000));
   // 外部連結用瀏覽器開
