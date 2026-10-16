@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.7';
+  const APP_VERSION = '1.9.8';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1132,6 +1132,14 @@
     match: ['配對', '5 個英文配 5 個中文'],
   };
   const MIX_KINDS = ['flash', 'cloze', 'meaning', 'sense', 'tf'];
+  // 易混淆的同組字：2～8 個才算（匯入時偶爾會產生幾百個字的大組，那種不算）
+  const GROUP_MAX = 8;
+  const groupOf = (e) => {
+    const g = e && e.group && S.groups[e.group];
+    if (!g) return null;
+    const n = g.members.filter((m) => byId(m)).length;
+    return n > 1 && n <= GROUP_MAX ? g : null;
+  };
   const zhOf = (e, k = 0) => ((e.senses[k] || e.senses[0] || {}).zh || e.zh || '').trim();
   // 有這個字的例句：生活例句優先，再來字典／筆記的例句
   const wordExamples = (e) => [...(e.life || []), ...e.examples].filter((x) => x.en && hasWord(x.en, e.text));
@@ -1181,8 +1189,7 @@
   // 題型自動混合：新字用閃卡；學過的字在閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯之間輪流；有同組字偶爾考辨析
   function pickKind(e) {
     if (e.type === 'sentence' || !e.review.reps) return 'flash';
-    const group = e.group && S.groups[e.group] && S.groups[e.group].members.filter((m) => byId(m)).length > 1;
-    if (group && ((e.review.lapses || 0) > 0 || Math.random() < 0.25)) return 'confuse';
+    if (groupOf(e) && ((e.review.lapses || 0) > 0 || Math.random() < 0.25)) return 'confuse';
     return MIX_KINDS[Math.floor(Math.random() * MIX_KINDS.length)];
   }
 
@@ -1198,7 +1205,7 @@
     if (R.range === 'old') pool = pool.filter((e) => e.src === 'import');
     pool = pool.filter(notRare);
     if (!['flash', 'mix'].includes(R.mode)) pool = pool.filter((e) => e.type === 'word');
-    if (R.mode === 'confuse') pool = pool.filter((e) => e.group && S.groups[e.group]);
+    if (R.mode === 'confuse') pool = pool.filter((e) => groupOf(e));
     return pool;
   }
 
@@ -1208,7 +1215,7 @@
   const zhParts = (z) => z.split(/[；;，,、／/]/).map((t) => t.replace(/[（(][^）)]*[）)]/g, '').trim()).filter(Boolean);
   // byMeaning：選項是中文意思（看英文選中文、這句裡、對或錯），不放同組的近義字
   function optionsFor(e, byMeaning) {
-    const same = !byMeaning && e.group && S.groups[e.group] ? S.groups[e.group].members.filter((m) => m !== e.id).map(byId).filter(Boolean) : [];
+    const same = !byMeaning && groupOf(e) ? groupOf(e).members.filter((m) => m !== e.id).map(byId).filter(Boolean) : [];
     const pos = (e.senses[0] || {}).pos;
     const mine = e.senses.flatMap((x) => zhParts(x.zh || ''));
     const clash = (x) => {
@@ -1227,7 +1234,7 @@
   function makeItem(e, kind) {
     if (e.type === 'sentence') kind = 'flash';
     const exs = wordExamples(e);
-    if (kind === 'confuse' && !(e.group && S.groups[e.group])) kind = 'cloze';
+    if (kind === 'confuse' && !groupOf(e)) kind = 'cloze';
     if ((kind === 'cloze' || kind === 'confuse' || kind === 'sense') && !exs.length) kind = 'meaning';
     const easy = exs.filter((x) => (e.life || []).includes(x) || x.easy);
     let ex = null, sIdx = 0;
@@ -1240,7 +1247,11 @@
     let options = null;
     if (kind === 'cloze') options = optionsFor(e).map((o) => o.id);
     if (['meaning', 'sense', 'tf'].includes(kind)) options = optionsFor(e, true).map((o) => o.id);
-    if (kind === 'confuse') options = shuffle(S.groups[e.group].members.filter((m) => byId(m))).slice(0, 4);
+    if (kind === 'confuse') {
+      // 一定包含正確答案，再從同組挑 3 個
+      const others = shuffle(groupOf(e).members.filter((m) => m !== e.id && byId(m))).slice(0, 3);
+      options = shuffle([e.id, ...others]);
+    }
     const it = { id: e.id, kind, options, ex, sIdx, result: null, next: '', again: false };
     if (kind === 'tf') {
       const others = options.filter((o) => o !== e.id);
@@ -1556,10 +1567,10 @@
       ${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
     confuse(s, it, e) {
-      const g = S.groups[e.group];
+      const g = groupOf(e) || { name: '', note: '' };
       return `
       <section class="q-card">
-        ${kindLabel(it)}<span class="muted small" lang="en">${esc(g.name)}</span>
+        ${kindLabel(it)}<span class="muted small" lang="en">${esc(g.name.length > 60 ? g.name.slice(0, 60) + '…' : g.name)}</span>
         <p class="cloze" lang="en">${blanked(it, e, s.picked)}</p>
         <p class="ex-zh">${esc(it.ex ? it.ex.zh : '')}</p>
       </section>
@@ -1749,7 +1760,7 @@
     // 回傳 舊 id → 新 id 的對照
     const map = {};
     (incoming || []).forEach((g) => {
-      if (!g || !g.members || g.members.length < 2) return;
+      if (!g || !g.members || g.members.length < 2 || g.members.length > GROUP_MAX * 3) return;   // 太大的不是易混淆組
       let id = g.id || 'g:' + hash(g.members.slice().sort().join('|'));
       const cur = S.groups[id];
       if (cur) {
@@ -2595,6 +2606,15 @@
         addEntry(normEntry(raw));
       });
       groups.forEach((g) => { S.groups[g.id] = g; });
+      // 清掉匯入時產生的超大組（幾百個字），那些字改成沒有同組
+      const huge = Object.values(S.groups).filter((g) => g.members.length > GROUP_MAX * 3);
+      if (huge.length) {
+        const ids = new Set(huge.map((g) => g.id));
+        const fix = S.entries.filter((e) => ids.has(e.group));
+        fix.forEach((e) => { e.group = null; });
+        huge.forEach((g) => { delete S.groups[g.id]; DB.del('groups', g.id).catch(dbFail); });
+        if (fix.length) saveEntries(fix);
+      }
       if (settings) S.settings = { ...DEFAULT_SETTINGS, ...settings };
       // 電腦版預設小一號（從兩倍改成特大），只調整一次
       // 記憶目標改成 85%（複習次數少很多），只調整一次

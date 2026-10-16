@@ -67,7 +67,7 @@
         cards.push({ type: 'word', text: w, ipa: words.length === 1 ? block.ipa : '', senses: senses.length ? senses : (words.length === 1 ? block.senses : []), examples: exs, notes: block.notes, tags: [tag], src: 'import' });
         if (!senses.length && !(words.length === 1 && block.senses.length)) issues.push({ word: w, kind: '缺少中文意思', text: block.head });
       });
-      if (words.length > 1) groups.push(words);
+      if (words.length > 1 && words.length <= 8) groups.push(words);   // 太多字的不是易混淆組
       block = null;
     };
     for (let i = 0; i < lines.length; i++) {
