@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.8';
+  const APP_VERSION = '1.9.9';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1154,7 +1154,7 @@
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
   /* 複習排程：階梯式（7 → 15 → 30 → 60 → 90 天，最長 90 天）
-     不熟：3 天、退回第一階；記得：往上一階；簡單：往上兩階；很熟：直接 30 天，之後再往上 */
+     不熟：3 天、退回第一階；記得：往上一階；簡單：往上兩階；很熟：往上三階（最多 90 天） */
   const STEPS = [7, 15, 30, 60, 90];
   const stepOf = (rv) => (Number.isInteger(rv.step) ? rv.step : -1);
   function scheduleFor(e, g, now = Date.now()) {
@@ -1163,7 +1163,7 @@
     let days;
     const top = STEPS.length - 1;
     if (g === 1) { step = -1; days = 3; }
-    else if (g === 4) { step = step < 2 ? 2 : Math.min(top, step + 1); days = STEPS[step]; }
+    else if (g === 4) { step = Math.min(top, step + 3); days = STEPS[step]; }   // 很熟：往上三階（新字＝30 天），一定比簡單遠
     else { step = Math.min(top, step + (g === 3 ? 2 : 1)); days = STEPS[step]; }
     const out = { ...rv, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
     if (g === 1) { out.wrong = (rv.wrong || 0) + 1; if (rv.reps) out.lapses = (rv.lapses || 0) + 1; } else out.right = (rv.right || 0) + 1;
@@ -1225,7 +1225,10 @@
       return z.some((a) => mine.some((b) => a === b || (a.length > 1 && b.includes(a)) || (b.length > 1 && a.includes(b))))
         || (e.group && x.group === e.group);
     };
-    const words = S.entries.filter((x) => x.type === 'word' && !x.temp && x.id !== e.id && !same.includes(x) && !clash(x) && !/\s/.test(x.text) === !/\s/.test(e.text));
+    const wc = (t) => t.trim().split(/\s+/).length;   // 幾個字
+    const n = wc(e.text);
+    const fits = (x) => (n === 1 ? wc(x.text) === 1 : Math.abs(wc(x.text) - n) <= 1 && (n > 4 || wc(x.text) <= 4));
+    const words = S.entries.filter((x) => x.type === 'word' && !x.temp && x.id !== e.id && !same.includes(x) && !clash(x) && fits(x));
     const samePos = words.filter((x) => (x.senses[0] || {}).pos === pos);
     const pickFrom = shuffle(samePos.length >= 6 ? samePos : words).slice(0, 3);
     return shuffle([e, ...same.slice(0, 3), ...pickFrom].slice(0, 4));
@@ -1428,7 +1431,8 @@
     return `<div class="progress"><div class="bar"><span style="width:${pct}%"></span></div><span class="tnum small muted">${s.i + 1} / ${s.items.length}</span>
       ${s.undo ? `<button class="link small" data-act="undo">↶ 復原</button>` : ''}</div>`;
   }
-  const kindLabel = (it) => `<p class="q-label">${srcTag(byId(it.id))}<span>${KIND[it.kind][0]}${it.again ? ' · 再考一次' : ''}</span></p>`;
+  const repTag = (e) => (!e ? '' : e.review.reps ? `<span class="rep-tag">第 ${e.review.reps + 1} 次複習</span>` : '<span class="rep-tag new">新字</span>');
+  const kindLabel = (it) => `<p class="q-label">${srcTag(byId(it.id))}${repTag(byId(it.id))}<span>${KIND[it.kind][0]}${it.again ? ' · 再考一次' : ''}</span></p>`;
 
   function choiceList(s, it) {
     const zhMode = it.kind === 'meaning' || it.kind === 'sense';
@@ -1954,7 +1958,7 @@
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
-        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」直接排到 30 天後。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
+        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」往上三階（新字是 30 天後，最多 90 天），一定比「簡單」遠。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
         <p>選好按鈕後，要再按「下一題」才會換卡；按錯了可以按「改」重選（電腦可以按 1–4 選、Enter 下一題）。複習到一半離開，下次打開會出現「繼續剛才的複習」，從同一張卡接著做。手機翻面後可以點例句裡的字，跳出小視窗看意思；電腦直接用左邊的「查詢」，再按「複習」就回到同一張卡。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型：新字用閃卡；學過的字輪流出閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯；有同組字的偶爾出易混淆辨析。做完今天的複習，可以用「配對」練新字。不考拼字，也不考聽發音。</p>
