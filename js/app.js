@@ -5,12 +5,12 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.9.9';
+  const APP_VERSION = '1.10.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
     accent: 'en-US', rate: 1, voice: '', autoSpeak: false,
-    defaultMode: 'word', newPerDay: 20, perSession: 20, retention: 0.85,
+    defaultMode: 'word', newPerDay: 20, perSession: 20, dailyMax: 50,   // dailyMax：每天最多複習幾個（0＝不限） retention: 0.85,
     fontSize: 'normal', zoom: window.DesktopApp ? 1.75 : 2, theme: 'light', skipRare: false,
     voiceMode: 'natural',  // natural：線上自然語音；system：系統語音
     reviewScope: 'all',    // all / old（47 個檔）/ new（新查的）
@@ -1177,13 +1177,18 @@
 
   function todayPlan() {
     rollDaily();
-    const due = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e)).sort((a, b) => a.review.due - b.review.due);
-    const newLeft = Math.max(0, Number(S.settings.newPerDay) - S.daily.newDone);
+    const dueAll = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e)).sort((a, b) => a.review.due - b.review.due);
+    // 每天上限：今天已經複習的也算在內；最早到期的先排，超過的留到明天
+    const max = Number(S.settings.dailyMax) || 0;
+    const room = max ? Math.max(0, max - (S.log[today()] || 0)) : Infinity;
+    const due = dueAll.slice(0, room);
+    const held = dueAll.length - due.length;
+    const newLeft = Math.max(0, Math.min(Number(S.settings.newPerDay) - S.daily.newDone, room - due.length));
     // 新查的字優先（剛查過最容易記），再來才是 47 個檔的新字
     // 新字：新查的優先，47 個檔的新字隨機挑（每次不會都從同一個字開始）
     const pool = S.entries.filter((e) => isNew(e) && notRare(e) && inScope(e));
     const fresh = [...shuffle(pool.filter((e) => e.src === 'new')), ...shuffle(pool.filter((e) => e.src !== 'new'))].slice(0, newLeft);
-    return { due, fresh, newLeft, list: [...due, ...fresh] };
+    return { due, fresh, newLeft, held, max, list: [...due, ...fresh] };
   }
 
   // 題型自動混合：新字用閃卡；學過的字在閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯之間輪流；有同組字偶爾考辨析
@@ -1370,10 +1375,10 @@
         <button class="btn today-btn" data-act="rv-resume">繼續剛才的複習（已完成 ${live.items.length - sessionLeft(live)}／${live.items.length}）</button>`
         : plan.list.length ? `
         <span class="today-n"><b class="tnum">${plan.list.length}</b> 個 · 約 ${mins} 分鐘</span>
-        <span class="today-s">到期 ${plan.due.length} 個 + 新字 ${plan.fresh.length} 個（每天新字上限 ${S.settings.newPerDay}，今天還能加 ${plan.newLeft} 個）</span>
+        <span class="today-s">到期 ${plan.due.length} 個 + 新字 ${plan.fresh.length} 個（每天最多 ${plan.max || '不限'} 個${plan.held ? `，另外 ${plan.held} 個到期的留到明天` : ''}）</span>
         <button class="btn today-btn" data-act="rv-today">開始今天的複習</button>`
-        : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，都完成了` : '今天沒有要複習的字'}</span>
-        <span class="today-s">${inR.length ? '想多學一點，可以再練一輪新字。到期的字還是照原本的日子複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>
+        : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，${plan.held ? '今天的份量做完了' : '都完成了'}` : '今天沒有要複習的字'}</span>
+        <span class="today-s">${plan.held ? `今天最多 ${plan.max} 個，還有 ${plan.held} 個到期的字，明天再複習。` : inR.length ? '想多學一點，可以再練一輪新字。到期的字還是照原本的日子複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>
         ${extraPool().length ? `<button class="btn today-btn" data-act="rv-extra">再練一輪（${Math.min(10, extraPool().length)} 個新字）</button>` : ''}
         ${extraPool().filter((e) => e.type === 'word').length >= 2 ? '<button class="btn ghost today-btn" data-act="rv-extra-match">用配對練新字</button>' : ''}`}
       </section>
@@ -2120,6 +2125,7 @@
         <p class="muted small">字典：Google 翻譯免費端點 + Free Dictionary API；句子翻譯失敗時改用 MyMemory。</p>
       </section>
       <section class="block panel"><h3>複習</h3>
+        <label class="set-row"><span>每天最多複習</span>${sel('set-max', 'dailyMax', [[30, '30 個'], [50, '50 個'], [80, '80 個'], [100, '100 個'], [0, '不限']])}</label>
         <label class="set-row"><span>每天新字上限</span>${sel('set-new', 'newPerDay', [[0, '0（先不加新字）'], [5, '5'], [10, '10'], [15, '15'], [20, '20'], [30, '30'], [50, '50']])}</label>
         <label class="set-row"><span>自訂複習題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
         <label class="set-row" hidden><span>目標記憶率</span>${sel('set-ret', 'retention', [[0.85, '85%（建議，複習少一點）'], [0.9, '90%'], [0.95, '95%（複習多一點）']])}</label>
