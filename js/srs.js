@@ -69,7 +69,8 @@
     const s = days * FACTOR / (Math.pow(retention, 1 / DECAY) - 1);
     return { ...out, s: Math.max(out.s, s), days, due: now + days * DAY };
   }
-  const fmtDays = (d) => (d < 30 ? `${d} 天` : d < 365 ? `${Math.round(d / 30)} 個月` : `${(d / 365).toFixed(1)} 年`);
+  // 剛好整月才寫「個月」，其他寫天數（45 天不會變成 2 個月）
+  const fmtDays = (d) => (d >= 365 ? `${(d / 365).toFixed(1)} 年` : d >= 30 && d % 30 === 0 ? `${d / 30} 個月` : `${d} 天`);
 
   window.SRS = { schedule, preview, fmtDays, retrievability, withFirstInterval };
 })();

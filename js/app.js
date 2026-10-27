@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.10.0';
+  const APP_VERSION = '1.11.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -16,6 +16,8 @@
     reviewScope: 'all',    // all / old（47 個檔）/ new（新查的）
   };
   const RECENT_MAX = 20;
+  // 這台裝置的代號（同步時分開記每台複習了幾個，加起來才是一天的總數）
+  const DEVICE = (() => { try { let d = localStorage.getItem('danciben-device'); if (!d) { d = Math.random().toString(36).slice(2, 10); localStorage.setItem('danciben-device', d); } return d; } catch (err) { return 'dev'; } })();
   const S = {
     ready: false,
     entries: [],
@@ -31,6 +33,7 @@
     draft: '',
     lib: { src: 'old', filter: 'all', usage: 'all', tag: '', q: '', sort: 'file', limit: 100 },
     reviewSetup: { range: 'all', mode: 'mix', tag: '', open: false },
+    devLog: {},
     session: null,
     backup: { file: null, parsed: null, strategy: 'merge', result: null },
     imp: { step: 1, files: [], parsed: null, error: '' },
@@ -1154,17 +1157,30 @@
   const inScope = (e) => S.settings.reviewScope === 'all' || (S.settings.reviewScope === 'new') === (e.src === 'new');
 
   /* 複習排程：階梯式（7 → 15 → 30 → 60 → 90 天，最長 90 天）
-     不熟：3 天、退回第一階；記得：往上一階；簡單：往上兩階；很熟：往上三階（最多 90 天） */
-  const STEPS = [7, 15, 30, 60, 90];
-  const stepOf = (rv) => (Number.isInteger(rv.step) ? rv.step : -1);
+     新字和複習過的字規則不同，見 scheduleFor */
+  const STEPS = [7, 15, 30, 45, 60, 90];
+  // 目前在第幾階：照上次排的天數算（不靠存下來的編號，手機和電腦舊版的資料也不會錯）
+  function stepOf(rv) {
+    if (!rv.reps) return -1;
+    const d = Number(rv.days ?? rv.s) || 0;
+    let st = -1;
+    STEPS.forEach((x, i) => { if (d >= x) st = i; });
+    return st;
+  }
+  // 新字：不熟 3 天、記得 7 天、簡單 15 天、很熟 30 天
+  // 複習過的字：不熟 7 天（回第一階）、記得至少 15 天（往上一階）、簡單至少 1 個月（往上兩階）、很熟至少 45 天（往上三階），最長 90 天
   function scheduleFor(e, g, now = Date.now()) {
     const rv = e.review;
+    const fresh = !rv.reps;
+    const top = STEPS.length - 1;
     let step = stepOf(rv);
     let days;
-    const top = STEPS.length - 1;
-    if (g === 1) { step = -1; days = 3; }
-    else if (g === 4) { step = Math.min(top, step + 3); days = STEPS[step]; }   // 很熟：往上三階（新字＝30 天），一定比簡單遠
-    else { step = Math.min(top, step + (g === 3 ? 2 : 1)); days = STEPS[step]; }
+    if (g === 1) { step = fresh ? -1 : 0; days = fresh ? 3 : STEPS[0]; }
+    else {
+      const up = g - 1;                           // 記得 1、簡單 2、很熟 3
+      step = Math.min(top, fresh ? step + up : Math.max(up, step + up));
+      days = STEPS[step];
+    }
     const out = { ...rv, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
     if (g === 1) { out.wrong = (rv.wrong || 0) + 1; if (rv.reps) out.lapses = (rv.lapses || 0) + 1; } else out.right = (rv.right || 0) + 1;
     return out;
@@ -1180,7 +1196,7 @@
     const dueAll = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e)).sort((a, b) => a.review.due - b.review.due);
     // 每天上限：今天已經複習的也算在內；最早到期的先排，超過的留到明天
     const max = Number(S.settings.dailyMax) || 0;
-    const room = max ? Math.max(0, max - (S.log[today()] || 0)) : Infinity;
+    const room = capLeft();
     const due = dueAll.slice(0, room);
     const held = dueAll.length - due.length;
     const newLeft = Math.max(0, Math.min(Number(S.settings.newPerDay) - S.daily.newDone, room - due.length));
@@ -1297,6 +1313,10 @@
     DB.setMeta('session', keep).catch(dbFail);
   }
   function startSession(list, mode, title) {
+    // 每天上限：再練一輪、自訂複習、頑固字也算在內
+    const left = capLeft();
+    if (left <= 0) { toast(`今天已經複習 ${dayTotal()} 個，明天再來`); go('review'); return; }
+    if (list.length > left) list = list.slice(0, left);
     if (!list.length) { toast('沒有要複習的字'); return; }
     S.session = { mode, title, i: 0, flipped: false, picked: null, pick: null, typed: '', items: mode === 'match' ? makeMatchItems(list) : list.map((e) => makeItem(e, mode === 'mix' ? pickKind(e) : mode)), undo: null };
     if (!S.session.items.length) { S.session = null; toast('配對至少要 2 個單字'); return; }
@@ -1334,6 +1354,16 @@
     });
     return days;
   }
+  // 每台裝置每天複習了幾個；一天的總數＝所有裝置加起來
+  function bumpDev(n) {
+    const day = today();
+    const mine = S.devLog[DEVICE] || (S.devLog[DEVICE] = {});
+    mine[day] = Math.max(0, (mine[day] || 0) + n);
+    DB.setMeta('devlog', S.devLog).catch(dbFail);
+  }
+  const dayTotal = (day = today()) => Object.values(S.devLog).reduce((t, m) => t + (m[day] || 0), 0);
+  // 今天還能複習幾個（Infinity＝不限）
+  const capLeft = () => { const max = Number(S.settings.dailyMax) || 0; return max ? Math.max(0, max - dayTotal()) : Infinity; };
   function streak() {
     let n = 0;
     const d = new Date();
@@ -1358,7 +1388,7 @@
     const wk = ['日', '一', '二', '三', '四', '五', '六'];
     const learned = inR.filter((e) => e.review.reps).length;
     const mastered = inR.filter((e) => statusKey(e) === 'mastered').length;
-    const doneToday = S.log[today()] || 0;
+    const doneToday = Math.max(dayTotal(), S.log[today()] || 0);
     const pool = customPool();
     const live = S.session && sessionLeft(S.session) ? S.session : null;
     const opt = (group, val, title, sub) => `
@@ -1379,8 +1409,8 @@
         <button class="btn today-btn" data-act="rv-today">開始今天的複習</button>`
         : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，${plan.held ? '今天的份量做完了' : '都完成了'}` : '今天沒有要複習的字'}</span>
         <span class="today-s">${plan.held ? `今天最多 ${plan.max} 個，還有 ${plan.held} 個到期的字，明天再複習。` : inR.length ? '想多學一點，可以再練一輪新字。到期的字還是照原本的日子複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>
-        ${extraPool().length ? `<button class="btn today-btn" data-act="rv-extra">再練一輪（${Math.min(10, extraPool().length)} 個新字）</button>` : ''}
-        ${extraPool().filter((e) => e.type === 'word').length >= 2 ? '<button class="btn ghost today-btn" data-act="rv-extra-match">用配對練新字</button>' : ''}`}
+        ${extraPool().length && capLeft() > 0 ? `<button class="btn today-btn" data-act="rv-extra">再練一輪（${Math.min(10, extraPool().length)} 個新字）</button>` : ''}
+        ${extraPool().filter((e) => e.type === 'word').length >= 2 && capLeft() > 1 ? '<button class="btn ghost today-btn" data-act="rv-extra-match">用配對練新字</button>' : ''}`}
       </section>
       <div class="scope-row"><span class="muted small">每天複習的範圍</span>
         <div class="seg small-seg">${[['all', '全部'], ['old', '47 個檔'], ['new', '新查的']].map(([k, t]) => `<button class="${S.settings.reviewScope === k ? 'on' : ''}" data-act="rv-scope" data-s="${k}">${t}</button>`).join('')}</div>
@@ -1702,14 +1732,14 @@
         ${ok < firsts.length ? '<button class="btn primary" data-act="rv-retry">把沒記住的再練一次</button>' : ''}
         <a class="btn ghost" href="#/review">回複習首頁</a>
       </div>
-      <p class="muted small">複習間隔一階一階往上：7 → 15 → 30 → 60 → 90 天（最長 90 天）。不熟的字 3 天後再出現。</p>`,
+      <p class="muted small">複習間隔一階一階往上：7 → 15 → 30 → 45 → 60 → 90 天（最長 90 天）。新字不熟 3 天後再出現，複習過的字不熟 7 天後再出現。</p>`,
     };
   }
 
   // g:1 不熟 2 記得 3 簡單 4 很熟
   function grade(g) {
     const s = S.session; const it = s.items[s.i]; const e = byId(it.id);
-    s.undo = { i: s.i, id: e.id, review: { ...e.review }, daily: { ...S.daily }, log: S.log[today()] || 0, len: s.items.length, result: it.result, next: it.next };
+    s.undo = { i: s.i, id: e.id, review: { ...e.review }, daily: { ...S.daily }, log: S.log[today()] || 0, len: s.items.length, result: it.result, next: it.next, again: it.again };
     it.result = g;
     saveSession();
     if (it.again) return;
@@ -1724,6 +1754,7 @@
     if (wasNew) { rollDaily(); S.daily.newDone++; DB.setMeta('daily', S.daily).catch(dbFail); }
     S.log[today()] = (S.log[today()] || 0) + 1;
     DB.setMeta('log', S.log).catch(dbFail);
+    bumpDev(1);
     saveEntry(e);
     return SRS.fmtDays(e.review.days) + '後';
   }
@@ -1749,6 +1780,7 @@
     e.review = u.review; saveEntry(e);
     S.daily = u.daily; DB.setMeta('daily', S.daily).catch(dbFail);
     S.log[today()] = u.log; DB.setMeta('log', S.log).catch(dbFail);
+    if (!u.again) bumpDev(-1);
     s.items.length = u.len;
     s.i = u.i; s.items[s.i].result = u.result; s.items[s.i].next = u.next;
     s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.undo = null; s.detail = false;
@@ -1763,6 +1795,7 @@
     toUndone(s);
     saveSession();
     render();
+    window.scrollTo(0, 0);   // 下一題從最上面開始看
   }
   /* ---------- 匯入合併（JSON 與 Word 共用） ---------- */
   function mergeGroups(incoming) {
@@ -1963,7 +1996,7 @@
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
-        <p>間隔是階梯式：按「記得」往上一階，「簡單」往上兩階，階梯是 7 → 15 → 30 → 60 → 90 天，最長 90 天，所以熟的字每 3 個月還是會回來一次。按「很熟」往上三階（新字是 30 天後，最多 90 天），一定比「簡單」遠。按「不熟」3 天後再考，並且從第一階重新開始。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
+        <p>間隔是階梯式：7 → 15 → 30 → 45 → 60 → 90 天，最長 90 天。新字：不熟 3 天、記得 7 天、簡單 15 天、很熟 30 天。複習過的字：不熟 7 天（回第一階），記得往上一階（至少 15 天），簡單往上兩階（至少 1 個月），很熟往上三階（至少 45 天）。每天最多複習 50 個（手機和電腦加起來），超過的留到明天。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
         <p>選好按鈕後，要再按「下一題」才會換卡；按錯了可以按「改」重選（電腦可以按 1–4 選、Enter 下一題）。複習到一半離開，下次打開會出現「繼續剛才的複習」，從同一張卡接著做。手機翻面後可以點例句裡的字，跳出小視窗看意思；電腦直接用左邊的「查詢」，再按「複習」就回到同一張卡。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型：新字用閃卡；學過的字輪流出閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯；有同組字的偶爾出易混淆辨析。做完今天的複習，可以用「配對」練新字。不考拼字，也不考聽發音。</p>
@@ -2296,7 +2329,7 @@
       }
       entries[e.id] = c;
     });
-    return { app: 'danciben-sync', v: 1, at: Date.now(), entries, tomb: S.tomb, log: S.log };
+    return { app: 'danciben-sync', v: 1, at: Date.now(), entries, tomb: S.tomb, log: S.log, devlog: S.devLog };
   }
   function mergeRemote(rem) {
     let changed = 0;
@@ -2321,10 +2354,17 @@
       if (c.c && (c.ea || 0) > (e.editAt || 0)) { CONTENT.forEach((k) => { if (k in c.c) e[k] = c.c[k]; }); e.editAt = c.ea; if (e.src === 'import') e.edited = true; touched.add(e); }
     });
     Object.entries(rem.log || {}).forEach(([k, v]) => { if ((S.log[k] || 0) < v) S.log[k] = v; });
+    let devChanged = 0;
+    Object.entries(rem.devlog || {}).forEach(([dev, days]) => {
+      if (dev === DEVICE) return;   // 自己的以這台為準
+      const m = S.devLog[dev] || (S.devLog[dev] = {});
+      Object.entries(days || {}).forEach(([k, v]) => { if ((m[k] || 0) !== v && v > (m[k] || 0)) { m[k] = v; devChanged++; } });
+    });
+    if (devChanged) DB.setMeta('devlog', S.devLog).catch(dbFail);
     if (touched.size) saveEntries([...touched]);
     saveTomb();
     DB.setMeta('log', S.log).catch(dbFail);
-    return changed + touched.size;
+    return changed + touched.size + (devChanged ? 1 : 0);
   }
   async function syncNow(manual) {
     const cfg = syncCfg();
@@ -2560,7 +2600,7 @@
       const v = (document.getElementById('wipe-confirm') || {}).value || '';
       if (v.trim() !== '全部刪除') { toast('請先在格子裡打「全部刪除」'); return; }
       await Promise.all([DB.clear('entries'), DB.clear('groups'), DB.clear('meta')]);
-      S.entries = []; S.index = new Map(); S.groups = {}; S.recent = []; S.log = {}; S.confirm = '';
+      S.entries = []; S.index = new Map(); S.groups = {}; S.recent = []; S.log = {}; S.devLog = {}; S.confirm = '';
       toast('已清除全部資料'); go('search');
     },
   };
@@ -2602,6 +2642,7 @@
         DB.getMeta('recent'), DB.getMeta('dictCache'),
       ]);
       S.tomb = (await DB.getMeta('tomb')) || {};
+      S.devLog = (await DB.getMeta('devlog')) || {};
       lifeItems = (await DB.getMeta('lifeItems')) || {};
       const sess = await DB.getMeta('session');
       // 舊版：查過的字會自動存進單字庫。現在只有按「加入複習」才保存，
