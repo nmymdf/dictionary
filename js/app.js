@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.12.0';
+  const APP_VERSION = '1.13.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -420,14 +420,24 @@
     if (!text) { toast('先輸入要查的單字或句子'); return; }
     S.draft = '';
     mode = mode || S.mode;
+    // 4 個字以上、沒有標點的英文：可能是片語（take it for granted），先查字典，查不到再整句翻譯
+    const phrase = mode !== 'sentence' && looksLikeSentence(text) && !hasZh(text) && !/[.,!?;:]/.test(text) && text.split(' ').length <= 8;
+    if (phrase && !notPhrase.has(wordKey(text))) { showResult('w', text.toLowerCase(), text); return; }
     const kind = mode === 'sentence' || looksLikeSentence(text) ? 's' : 'w';
     showResult(kind, kind === 'w' ? text.replace(/[.,!?;:。，！？]+$/, '').toLowerCase() : text);
   }
-  function showResult(kind, q) {
+  const notPhrase = new Set();   // 查過字典沒有的長片語，下次直接翻譯
+  // 字典的字頭跟查的片語對得上嗎（sb、sth、one's、be 可以換成實際的字）
+  function phraseMatches(head, q) {
+    const n = (t) => normText(t).toLowerCase().replace(/[’]/g, "'");
+    head = n(head); q = n(q);
+    return head === q || new RegExp('^' + wordRe(head).source + '$', 'i').test(q);
+  }
+  function showResult(kind, q, phraseOf) {
     S.cur = { kind, q };
     const key = keyOf(S.cur);
     const st = S.dict[key];
-    if (!st || st.status === 'error') (kind === 'w' ? fetchWord(q) : fetchSentence(q));
+    if (!st || st.status === 'error') (kind === 'w' ? fetchWord(q, false, phraseOf) : fetchSentence(q));
     S.scrollTop = true;
     if (location.hash !== '#/search') go('search'); else render();
   }
@@ -444,13 +454,20 @@
     };
   }
   // quiet：複習時查的，不放進「最近查過」
-  async function fetchWord(word, quiet) {
+  // phraseOf：長片語先試字典（原本打的字），字典沒有就改成整句翻譯
+  async function fetchWord(word, quiet, phraseOf) {
     const key = wordKey(word);
     const t0 = performance.now();
     S.dict[key] = { status: 'loading' };
     let data = null, notFound = false;
     const why = [];
     try { data = await Yahoo.lookup(word); notFound = !data; } catch (e) { why.push('Yahoo：' + (e.message || e)); }
+    if (phraseOf && !(data && data.source === 'yahoo' && !/AI/.test(data.dict) && phraseMatches(data.word, word))) {
+      delete S.dict[key];
+      if (data || notFound) notPhrase.add(key);   // 連不上的話下次再試字典
+      if (S.cur && S.cur.kind === 'w' && S.cur.q === word) showResult('s', phraseOf);
+      return;
+    }
     if (!data && !notFound && !hasZh(word)) {
       try { data = basicToDict(word, await Lookup.word(word)); } catch (e) { why.push('備用字典：' + (e.message || e)); }
     }
@@ -1997,7 +2014,7 @@
       <section class="block panel help">
         <h3>查字典</h3>
         <p>打英文查中文，打中文查英文，都用 <b>Yahoo 字典</b>（牛津中文字典）。結果直接出現在搜尋框下面，不用換頁。</p>
-        <p>貼上整句會自動翻譯（英翻中、中翻英），點句子裡的英文字可以查那個字。</p>
+        <p>貼上整句會自動翻譯（英翻中、中翻英），點句子裡的英文字可以查那個字。4 個字以上、沒有標點的（例如 take it for granted）會先查字典的片語，字典沒有才整句翻譯。</p>
         <p>如果這個字在你的 47 個檔裡，上面會先顯示<b>我的筆記</b>（綠色標籤寫檔名）。</p>
         <p>發音用線上自然語音，沒有網路時改用系統語音。</p>
       </section>
@@ -2282,7 +2299,7 @@
   }
 
   /* ---------- 手機和電腦同步（存在自己的私人 GitHub 資料夾） ----------
-     每台裝置設定一次通行碼。打開 App、複習、加字、刪字之後自動同步。
+     每台裝置設定一次通行碼。打開 App、回到 App、複習、加字、刪字之後自動同步。
      合併規則：同一個字的複習進度，以「最後一次複習」的那一台為準；
      加入／移出複習、編輯，以最後改的為準；刪除會留紀錄，另一台也刪掉。 */
   const SYNC_DEFAULT = { token: '', repo: 'nmymdf/vocab-files', path: 'sync/danciben-progress.json', lastAt: 0, err: '' };
@@ -2348,7 +2365,8 @@
     });
     return { app: 'danciben-sync', v: 1, at: Date.now(), entries, tomb: S.tomb, log: S.log, devlog: S.devLog };
   }
-  function mergeRemote(rem) {
+  // reviewed：收集另一台複習過（進度比這台新）的字
+  function mergeRemote(rem, reviewed = new Set()) {
     let changed = 0;
     const touched = new Set();
     Object.entries(rem.tomb || {}).forEach(([id, t]) => {
@@ -2366,7 +2384,7 @@
         addEntry(e); touched.add(e); changed++;
         return;
       }
-      if (c.r && (c.r.last || 0) > (e.review.last || 0)) { e.review = { ...e.review, ...c.r }; touched.add(e); }
+      if (c.r && (c.r.last || 0) > (e.review.last || 0)) { e.review = { ...e.review, ...c.r }; touched.add(e); reviewed.add(id); }
       if ((c.sa || 0) > (e.starAt || 0)) { e.starred = !!c.st; e.starAt = c.sa; touched.add(e); }
       if (c.c && (c.ea || 0) > (e.editAt || 0)) { CONTENT.forEach((k) => { if (k in c.c) e[k] = c.c[k]; }); e.editAt = c.ea; if (e.src === 'import') e.edited = true; touched.add(e); }
     });
@@ -2390,11 +2408,12 @@
     syncing = true;
     syncBtnState();
     if (manual) toast('同步中…');
-    let n = 0;
+    let n = 0, pruned = 0;
+    const reviewed = new Set();
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         const { data, sha } = await syncGet(cfg);
-        if (data && data.app === 'danciben-sync') n = mergeRemote(data);
+        if (data && data.app === 'danciben-sync') n = mergeRemote(data, reviewed);
         const body = { message: '單字本同步 ' + new Date().toLocaleString('zh-TW'), content: b64enc(JSON.stringify(buildPayload())) };
         if (sha) body.sha = sha;
         const r = await gh(cfg, 'PUT', body);
@@ -2404,6 +2423,7 @@
         try { why = (await r.json()).message || ''; } catch (e) { /* 沒有說明 */ }
         throw new Error((r.status === 401 ? '通行碼不對（401）' : r.status === 403 ? '沒有寫入權限（403）' : r.status === 404 ? '找不到 vocab-files，通行碼沒有選到這個資料夾（404）' : 'GitHub 回應 ' + r.status) + (why ? '：' + why : ''));
       }
+      pruned = pruneSession(reviewed);
       let lifeTag = cfg.lifeTag || '';
       try { const L = await syncLife(cfg); n += L.n; lifeTag = L.tag; } catch (e) { /* 例句下次再抓 */ }
       S.settings.sync = { ...cfg, lastAt: Date.now(), err: '', lifeTag };
@@ -2415,9 +2435,52 @@
     saveSettings();
     syncing = false;
     syncBtnState();
-    if (!/review\/quiz/.test(location.hash) && (n || manual || /settings/.test(location.hash))) render();
+    if (pruned && /review\/quiz/.test(location.hash)) {
+      toast(`有 ${pruned} 個字已經在另一台複習過，這一輪拿掉了`);
+      if (!sessionLeft(S.session)) go('review/result'); else render();
+    } else if (!/review\/quiz/.test(location.hash) && (n || manual || /settings/.test(location.hash))) render();
     if (syncAgain) { syncAgain = false; scheduleSync(2000); }
   }
+  // 這一輪還沒做的字，如果另一台已經複習過了，就從這一輪拿掉（不會重複評分、蓋掉另一台的結果）
+  function pruneSession(reviewed) {
+    const s = S.session;
+    if (!s || !reviewed.size) return 0;
+    let n = 0;
+    const cur = s.items[s.i];
+    const keep = [];
+    s.items.forEach((x) => {
+      if (x.result !== null) { keep.push(x); return; }
+      if (x.kind === 'match') {
+        const gone = x.ids.filter((id) => reviewed.has(id) && !x.done.includes(id));
+        if (!gone.length) { keep.push(x); return; }
+        x.ids = x.ids.filter((id) => !gone.includes(id)); x.right = x.right.filter((id) => !gone.includes(id)); x.missed = x.missed.filter((id) => !gone.includes(id));
+        n += gone.length;
+        if (x.ids.length >= 2) { x.id = x.ids[0]; keep.push(x); }
+        return;
+      }
+      if (reviewed.has(x.id)) { n++; return; }
+      keep.push(x);
+    });
+    if (!n) return 0;
+    s.items = keep; s.undo = null;
+    const at = keep.indexOf(cur);
+    if (at >= 0) s.i = at;
+    else {
+      // 正在看的這張被拿掉了：停在下一張還沒做的
+      s.i = Math.min(keep.length - 1, Math.max(0, keep.findIndex((x) => x.result === null)));
+      s.flipped = false; s.picked = null; s.pick = null; s.typed = ''; s.msel = null; s.mbad = null; s.detail = false; S.peek = null;
+    }
+    if (!keep.length) S.session = null; else toUndone(s);
+    saveSession();
+    return n;
+  }
+  // 回到 App（手機從背景切回來、電腦點回視窗）：超過 1 分鐘沒同步就同步一次
+  function syncOnReturn() {
+    const cfg = syncCfg();
+    if (cfg.token && !syncing && Date.now() - (cfg.lastAt || 0) > 60000) syncNow();
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncOnReturn(); });
+  window.addEventListener('focus', syncOnReturn);
   // 左邊欄（電腦）和上方（手機）的同步按鈕：轉圈＝同步中，紅點＝上次失敗
   function syncBtnState() {
     const cfg = syncCfg();
