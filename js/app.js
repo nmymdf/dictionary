@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.11.0';
+  const APP_VERSION = '1.12.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1181,7 +1181,7 @@
       step = Math.min(top, fresh ? step + up : Math.max(up, step + up));
       days = STEPS[step];
     }
-    const out = { ...rv, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
+    const out = { ...rv, g, step, days, s: days, last: now, due: now + days * DAYMS, status: 'review', reps: (rv.reps || 0) + 1 };
     if (g === 1) { out.wrong = (rv.wrong || 0) + 1; if (rv.reps) out.lapses = (rv.lapses || 0) + 1; } else out.right = (rv.right || 0) + 1;
     return out;
   }
@@ -1191,18 +1191,35 @@
     if (S.daily.date !== today()) { S.daily = { date: today(), newDone: 0 }; DB.setMeta('daily', S.daily).catch(dbFail); }
   }
 
+  // 到期字的優先順序：0 上次按「不熟」→ 1 還在前兩階（7、15 天）→ 2 已經很熟（30 天以上）；同一層最早到期的先
+  function dueTier(e) {
+    const rv = e.review;
+    if (rv.g === 1 || (rv.g == null && (rv.wrong || 0) > 0 && (Number(rv.days) || 0) <= 7)) return 0;
+    return stepOf(rv) <= 1 ? 1 : 2;
+  }
+  /* 每天的份量（例：每天最多 50、新字 20）
+     1. 先留 20 個位子給新字，新字天天都有，不會被到期字擠掉
+     2. 到期字最多 50 − 20 ＝ 30 個，照 dueTier 的順序挑，其餘留到下次（不會消失）
+     3. 47 個檔的新字用完了，50 個位子全部給到期字
+     4. 今天已經做的也算在內（手機加電腦） */
   function todayPlan() {
     rollDaily();
-    const dueAll = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e)).sort((a, b) => a.review.due - b.review.due);
-    // 每天上限：今天已經複習的也算在內；最早到期的先排，超過的留到明天
+    const dueAll = S.entries.filter((e) => isDue(e) && notRare(e) && inScope(e))
+      .sort((a, b) => dueTier(a) - dueTier(b) || a.review.due - b.review.due);
     const max = Number(S.settings.dailyMax) || 0;
     const room = capLeft();
-    const due = dueAll.slice(0, room);
-    const held = dueAll.length - due.length;
-    const newLeft = Math.max(0, Math.min(Number(S.settings.newPerDay) - S.daily.newDone, room - due.length));
-    // 新查的字優先（剛查過最容易記），再來才是 47 個檔的新字
-    // 新字：新查的優先，47 個檔的新字隨機挑（每次不會都從同一個字開始）
     const pool = S.entries.filter((e) => isNew(e) && notRare(e) && inScope(e));
+    const newWant = Math.max(0, Number(S.settings.newPerDay) - S.daily.newDone);
+    const newLeft = Math.min(newWant, pool.length, room);
+    let dueRoom = room - newLeft;
+    if (max) {
+      const reserve = Math.min(Number(S.settings.newPerDay), S.daily.newDone + pool.length);  // 今天要留給新字的位子
+      const dueDone = Math.max(0, dayTotal() - S.daily.newDone);                               // 今天已經複習的到期字
+      dueRoom = Math.max(0, Math.min(dueRoom, max - reserve - dueDone));
+    }
+    const due = dueAll.slice(0, dueRoom);
+    const held = dueAll.length - due.length;
+    // 新字：新查的優先，47 個檔的新字隨機挑（每次不會都從同一個字開始）
     const fresh = [...shuffle(pool.filter((e) => e.src === 'new')), ...shuffle(pool.filter((e) => e.src !== 'new'))].slice(0, newLeft);
     return { due, fresh, newLeft, held, max, list: [...due, ...fresh] };
   }
@@ -1405,7 +1422,7 @@
         <button class="btn today-btn" data-act="rv-resume">繼續剛才的複習（已完成 ${live.items.length - sessionLeft(live)}／${live.items.length}）</button>`
         : plan.list.length ? `
         <span class="today-n"><b class="tnum">${plan.list.length}</b> 個 · 約 ${mins} 分鐘</span>
-        <span class="today-s">到期 ${plan.due.length} 個 + 新字 ${plan.fresh.length} 個（每天最多 ${plan.max || '不限'} 個${plan.held ? `，另外 ${plan.held} 個到期的留到明天` : ''}）</span>
+        <span class="today-s">到期 ${plan.due.length} 個 + 新字 ${plan.fresh.length} 個（每天最多 ${plan.max || '不限'} 個${plan.held ? `，另外 ${plan.held} 個到期的留到下次` : ''}）</span>
         <button class="btn today-btn" data-act="rv-today">開始今天的複習</button>`
         : `<span class="today-n">${doneToday ? `今天複習了 <b class="tnum">${doneToday}</b> 次，${plan.held ? '今天的份量做完了' : '都完成了'}` : '今天沒有要複習的字'}</span>
         <span class="today-s">${plan.held ? `今天最多 ${plan.max} 個，還有 ${plan.held} 個到期的字，明天再複習。` : inR.length ? '想多學一點，可以再練一輪新字。到期的字還是照原本的日子複習。' : '在查詢結果或單字庫點星號，或匯入你的單字簿。'}</span>
@@ -1996,7 +2013,7 @@
       </section>
       <section class="block panel help">
         <h3>複習怎麼排</h3>
-        <p>間隔是階梯式：7 → 15 → 30 → 45 → 60 → 90 天，最長 90 天。新字：不熟 3 天、記得 7 天、簡單 15 天、很熟 30 天。複習過的字：不熟 7 天（回第一階），記得往上一階（至少 15 天），簡單往上兩階（至少 1 個月），很熟往上三階（至少 45 天）。每天最多複習 50 個（手機和電腦加起來），超過的留到明天。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
+        <p>間隔是階梯式：7 → 15 → 30 → 45 → 60 → 90 天，最長 90 天。新字：不熟 3 天、記得 7 天、簡單 15 天、很熟 30 天。複習過的字：不熟 7 天（回第一階），記得往上一階（至少 15 天），簡單往上兩階（至少 1 個月），很熟往上三階（至少 45 天）。每天最多複習 50 個（手機和電腦加起來）：先留 20 個給新字，到期的字最多 30 個；到期的字太多時，上次按「不熟」的先，再來是還不熟的（7、15 天），很熟的最後，其餘留到下次，不會消失。新字用完後，50 個全部給到期的字。今天的複習做完，還想多學，可以按「再練一輪」再學 10 個新字。</p>
         <p>選好按鈕後，要再按「下一題」才會換卡；按錯了可以按「改」重選（電腦可以按 1–4 選、Enter 下一題）。複習到一半離開，下次打開會出現「繼續剛才的複習」，從同一張卡接著做。手機翻面後可以點例句裡的字，跳出小視窗看意思；電腦直接用左邊的「查詢」，再按「複習」就回到同一張卡。</p>
         <p>每天只出到期的字，加上有上限的新字。每天花 10–15 分鐘，比一次猛背有效。</p>
         <p>題型：新字用閃卡；學過的字輪流出閃卡、例句挖空、看英文選中文、這句裡是什麼意思、對或錯；有同組字的偶爾出易混淆辨析。做完今天的複習，可以用「配對」練新字。不考拼字，也不考聽發音。</p>
