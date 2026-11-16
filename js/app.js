@@ -5,12 +5,12 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.14.0';
+  const APP_VERSION = '1.15.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
     accent: 'en-US', rate: 1, voice: '', autoSpeak: false,
-    defaultMode: 'word', newPerDay: 20, perSession: 20, dailyMax: 50,   // dailyMax：每天最多複習幾個（0＝不限） retention: 0.85,
+    defaultMode: 'word', newPerDay: 20, perSession: 20, dailyMax: 50, reviewSpeak: 'off',   // dailyMax：每天最多複習幾個（0＝不限） retention: 0.85,
     fontSize: 'normal', zoom: window.DesktopApp ? 1.75 : 2, theme: 'light', skipRare: false,
     voiceMode: 'natural',  // natural：線上自然語音；system：系統語音
     reviewScope: 'all',    // all / old（47 個檔）/ new（新查的）
@@ -423,6 +423,9 @@
     // 4 個字以上、沒有標點的英文：可能是片語（take it for granted），先查字典，查不到再整句翻譯
     const phrase = mode !== 'sentence' && looksLikeSentence(text) && !hasZh(text) && !/[.,!?;:]/.test(text) && text.split(' ').length <= 8;
     if (phrase && !notPhrase.has(wordKey(text))) { showResult('w', text.toLowerCase(), text); return; }
+    // 中文短詞（沒有標點、8 個字以內）：先查字典，字典沒有（例如「你不可以插隊」）就自動翻成英文
+    const zhShort = mode !== 'sentence' && hasZh(text) && !looksLikeSentence(text);
+    if (zhShort && !notPhrase.has(wordKey(text))) { showResult('w', text, text, true); return; }
     const kind = mode === 'sentence' || looksLikeSentence(text) ? 's' : 'w';
     showResult(kind, kind === 'w' ? text.replace(/[.,!?;:。，！？]+$/, '').toLowerCase() : text);
   }
@@ -433,11 +436,11 @@
     head = n(head); q = n(q);
     return head === q || new RegExp('^' + wordRe(head).source + '$', 'i').test(q);
   }
-  function showResult(kind, q, phraseOf) {
+  function showResult(kind, q, phraseOf, lenient) {
     S.cur = { kind, q };
     const key = keyOf(S.cur);
     const st = S.dict[key];
-    if (!st || st.status === 'error') (kind === 'w' ? fetchWord(q, false, phraseOf) : fetchSentence(q));
+    if (!st || st.status === 'error') (kind === 'w' ? fetchWord(q, false, phraseOf, lenient) : fetchSentence(q));
     S.scrollTop = true;
     if (location.hash !== '#/search') go('search'); else render();
   }
@@ -455,14 +458,15 @@
   }
   // quiet：複習時查的，不放進「最近查過」
   // phraseOf：長片語先試字典（原本打的字），字典沒有就改成整句翻譯
-  async function fetchWord(word, quiet, phraseOf) {
+  // lenient：中文，字典有找到任何結果就算（不比對字頭）
+  async function fetchWord(word, quiet, phraseOf, lenient) {
     const key = wordKey(word);
     const t0 = performance.now();
     S.dict[key] = { status: 'loading' };
     let data = null, notFound = false;
     const why = [];
     try { data = await Yahoo.lookup(word); notFound = !data; } catch (e) { why.push('Yahoo：' + (e.message || e)); }
-    if (phraseOf && !(data && data.source === 'yahoo' && !/AI/.test(data.dict) && phraseMatches(data.word, word))) {
+    if (phraseOf && !(lenient ? data : (data && data.source === 'yahoo' && !/AI/.test(data.dict) && phraseMatches(data.word, word)))) {
       delete S.dict[key];
       if (data || notFound) notPhrase.add(key);   // 連不上的話下次再試字典
       if (S.cur && S.cur.kind === 'w' && S.cur.q === word) showResult('s', phraseOf);
@@ -497,7 +501,8 @@
       S.dict[key] = { status: 'ok', data: { tr, dir: zhSrc ? 'zh-en' : 'en-zh' }, ms: Math.round(performance.now() - t0) };
       addRecent(key, text, 's', tr);
     } catch (err) {
-      S.dict[key] = { status: 'error', msg: navigator.onLine === false ? '沒有網路連線' : '翻譯服務沒有回應', why: String(err && err.message || err) };
+      const why = String(err && err.message || err);
+      S.dict[key] = { status: 'error', msg: navigator.onLine === false ? '沒有網路連線' : /429|限速/.test(why) ? '翻譯太頻繁被擋住了，等一分鐘再按重試' : /逾時/.test(why) ? '翻譯逾時，請按重試' : '翻譯服務沒有回應，請按重試', why };
     }
     renderIfShowing(key, '#/s/' + encodeURIComponent(text));
   }
@@ -1519,6 +1524,13 @@
         <span>${esc(main)}</span>${s.picked ? `<span class="choice-zh" ${zhMode ? 'lang="en"' : ''}>${esc(sub)}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
+  // 答完（測驗題）直接顯示答案：字、音標、發音、中文意思；有例句的再多一個唸例句的喇叭
+  const answerBox = (e, it) => e.type !== 'word' ? '' : `<section class="ans-box">
+      <div class="ans-head"><b class="ans-word" lang="en">${esc(e.text)}</b>${e.ipa ? `<span class="ipa">${esc(e.ipa)}</span>` : ''}${speakBtn(e.text, '播放發音', 'card-speak')}</div>
+      ${sensesBlock(e)}
+      ${it && it.ex && it.ex.en ? `<div class="ans-ex"><span class="muted small">題目的句子</span>${speakBtn(it.ex.en, '播放例句', 'ex-speak')}</div>` : ''}
+    </section>`;
+  const autoSay = (e) => { if (S.settings.reviewSpeak === 'on' && e && e.type === 'word') speak(e.text); };
   const nextBar = (s, ok) => `<div class="start-bar"><span class="${ok ? 'ok-txt' : 'bad-txt'}">${ok ? '答對了' : '答錯了，3 天後會再考'}</span><button class="btn primary" data-act="next" id="next-btn">${s.i + 1 < s.items.length ? '下一題' : '看結果'}</button></div>`;
   function gradeBar(s, e) {
     if (!s.flipped) return '<div class="grade placeholder"><button class="btn primary wide" data-act="flip">顯示答案</button></div>';
@@ -1612,7 +1624,7 @@
     }).catch(() => { saveEntry(e); });
   }
   const cardBack = (e) => (e.type === 'word'
-    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x, k) => `<div class="card-ex">${x.lifeTag && !k ? '<span class="easy-tag">生活例句</span>' : x.dictTag ? '<span class="easy-tag dict-tag">字典例句</span>' : ''}<div class="ex-en small" lang="en">${peekText(x.en, e.text)}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
+    ? `${sensesBlock(e)}${e.forms && e.forms.infl ? `<p class="infl small" lang="en">${esc(e.forms.infl)}</p>` : ''}${shortExamples(e).map((x, k) => `<div class="card-ex">${x.lifeTag && !k ? '<span class="easy-tag">生活例句</span>' : x.dictTag ? '<span class="easy-tag dict-tag">字典例句</span>' : ''}<div class="ex-en small" lang="en">${peekText(x.en, e.text)} ${speakBtn(x.en, '播放例句', 'ex-speak')}</div>${x.zh ? `<div class="ex-zh">${esc(x.zh)}</div>` : ''}</div>`).join('')}`
     : `<p class="sent-zh">${esc(e.zh)}</p>`) + (e.src === 'new' && e.notes.length ? `<p class="rv-notes">${ic('pen')} ${esc(e.notes.join('；'))}</p>` : '');
 
   const RENDER = {
@@ -1637,7 +1649,7 @@
         <p class="cloze" lang="en">${blanked(it, e, s.picked)}</p>
         <p class="ex-zh">${esc(it.ex ? it.ex.zh : '')}</p>
       </section>
-      ${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
+      ${s.picked ? answerBox(e, it) : ''}${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
     confuse(s, it, e) {
       const g = groupOf(e) || { name: '', note: '' };
@@ -1647,7 +1659,7 @@
         <p class="cloze" lang="en">${blanked(it, e, s.picked)}</p>
         <p class="ex-zh">${esc(it.ex ? it.ex.zh : '')}</p>
       </section>
-      ${choiceList(s, it)}
+      ${s.picked ? answerBox(e, it) : ''}${choiceList(s, it)}
       ${s.picked && (e.related[0] || g.note) ? `<p class="confuse-note">${ic('alert')} ${esc(e.related[0] || g.note)}</p>` : ''}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
     meaning(s, it, e) {
@@ -1668,7 +1680,7 @@
         ${s.picked && it.ex.zh ? `<p class="ex-zh">${esc(it.ex.zh)}</p>` : ''}
         <p class="sense-q">這句裡的 <b lang="en">${esc(e.text)}</b> 是什麼意思？</p>
       </section>
-      ${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
+      ${s.picked ? answerBox(e, it) : ''}${choiceList(s, it)}${s.picked ? nextBar(s, s.picked === it.id) : ''}`;
     },
     tf(s, it, e) {
       const ok = s.picked === it.id;
@@ -1680,7 +1692,7 @@
         <span class="tf-zh">${esc(it.tfZh)}</span>
         ${s.picked ? `<p class="tf-ans">${it.tfTrue ? '這是對的' : `這是錯的，<b lang="en">${esc(e.text)}</b> 是「${esc(zhOf(e))}」`}</p>` : '<span class="muted small">這個意思對嗎？</span>'}
       </section>
-      ${s.picked ? nextBar(s, ok) : `<div class="choices two tf-btns">
+      ${s.picked ? answerBox(e, it) + nextBar(s, ok) : `<div class="choices two tf-btns">
         <button class="choice tf-yes" data-act="tf" data-v="1" data-n="1"><span>對</span></button>
         <button class="choice tf-no" data-act="tf" data-v="0" data-n="2"><span>錯</span></button></div>`}`;
     },
@@ -2222,6 +2234,7 @@
       </section>
       <section class="block panel"><h3>複習</h3>
         <label class="set-row"><span>每天最多複習</span>${sel('set-max', 'dailyMax', [[30, '30 個'], [50, '50 個'], [80, '80 個'], [100, '100 個'], [0, '不限']])}</label>
+        <label class="set-row"><span>答完自動唸單字</span>${sel('set-rspeak', 'reviewSpeak', [['off', '不要'], ['on', '要']])}</label>
         <label class="set-row"><span>每天新字上限</span>${sel('set-new', 'newPerDay', [[0, '0（先不加新字）'], [5, '5'], [10, '10'], [15, '15'], [20, '20'], [30, '30'], [50, '50']])}</label>
         <label class="set-row"><span>自訂複習題數</span>${sel('set-per', 'perSession', [[10, '10'], [20, '20'], [30, '30'], [50, '50']])}</label>
         <label class="set-row" hidden><span>目標記憶率</span>${sel('set-ret', 'retention', [[0.85, '85%（建議，複習少一點）'], [0.9, '90%'], [0.95, '95%（複習多一點）']])}</label>
@@ -2621,7 +2634,7 @@
       const again = flatItems(s).filter((x) => x.result < 3).map((x) => byId(x.id)).filter(Boolean);
       startSession(again, s.mode === 'match' && again.length < 2 ? 'mix' : s.mode, s.title);
     },
-    flip: () => { if (!S.session.flipped) { S.session.flipped = true; render(); } },
+    flip: () => { if (!S.session.flipped) { S.session.flipped = true; render(); autoSay(byId(S.session.items[S.session.i].id)); } },
     grade: (d) => { S.session.pick = Number(d.g); render(); },
     'grade-change': () => { S.session.pick = null; render(); },
     peek: (d) => {
@@ -2653,6 +2666,7 @@
       s.picked = d.id;
       grade(d.id === it.id ? 3 : 1);
       render();
+      autoSay(byId(it.id));
     },
     tf: (d) => {
       const s = S.session; const it = s.items[s.i];
@@ -2661,6 +2675,7 @@
       s.picked = ok ? it.id : '__wrong';
       grade(ok ? 2 : 1);
       render();
+      autoSay(byId(it.id));
     },
     'm-left': (d) => { const s = S.session; s.msel = d.id; s.mbad = null; render(); },
     'm-right': (d) => {

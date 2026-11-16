@@ -300,14 +300,17 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** 代抓 Yahoo 字典網頁（網頁本身不能跨網站讀取），抓完呼叫 window.__nativeFetchDone。 */
+        /** 代抓字典和翻譯網頁（網頁本身不能跨網站讀取；只允許這幾個網站），抓完呼叫 window.__nativeFetchDone。 */
         @JavascriptInterface
         public void fetchText(String id, String url) {
             new Thread(() -> {
                 int status = 0;
                 String finalUrl = url;
                 String text = "";
-                if (url != null && url.startsWith("https://tw.dictionary.search.yahoo.com/")) {
+                if (url != null && (url.startsWith("https://tw.dictionary.search.yahoo.com/")
+                        || url.startsWith("https://translate.googleapis.com/")
+                        || url.startsWith("https://api.mymemory.translated.net/")
+                        || url.startsWith("https://api.dictionaryapi.dev/"))) {
                     HttpURLConnection c = null;
                     try {
                         c = (HttpURLConnection) new URL(url).openConnection();

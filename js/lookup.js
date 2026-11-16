@@ -18,15 +18,49 @@
   }
 
   async function getJSON(url) {
-    // Windows 版：由程式本身代抓，不受網頁跨網站限制
-    if (window.DesktopApp && window.DesktopApp.fetchText) {
-      const r = await window.DesktopApp.fetchText(url);
-      if (!r || r.status < 200 || r.status >= 400) throw new Error(r && r.error ? r.error : 'HTTP ' + (r && r.status));
+    // 手機、電腦版：由程式本身代抓，不受網頁跨網站限制（跟 Yahoo 字典一樣）
+    if (window.Yahoo && window.Yahoo.canFetch && window.Yahoo.canFetch()) {
+      const r = await window.Yahoo.fetchText(url, 10000);
       return JSON.parse(r.text);
     }
     const res = await fetch(url, { signal: timeout(10000) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const msg = (err) => String((err && err.message) || err || '').replace(/^Error:\s*/, '');
+  // 失敗原因寫清楚：被限速（429）、沒網路、逾時
+  const reason = (err) => {
+    const m = msg(err);
+    if (/429/.test(m)) return '被限速（429），請稍等一下再查';
+    if (/abort|逾時|沒有回應|timeout/i.test(m)) return '逾時沒有回應';
+    if (navigator.onLine === false) return '沒有網路';
+    return m || '不明原因';
+  };
+  // 備用的 MyMemory：每天有字數上限，超過時會回一句英文警告當成翻譯，要擋掉
+  async function myMemory(q, pair) {
+    const data = await getJSON('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q, langpair: pair }));
+    const t = data && data.responseData && data.responseData.translatedText;
+    if (!t) throw new Error('沒有翻譯結果');
+    if (/MYMEMORY WARNING|USED ALL AVAILABLE/i.test(t)) throw new Error('備用翻譯今天的次數用完了');
+    return t;
+  }
+  // Google 翻譯先試兩次（中間等一下），再換備用；全部失敗時把每一步的原因都帶出去
+  async function viaGoogle(url, pair, q, pick) {
+    const why = [];
+    for (let i = 0; i < 2; i++) {
+      try {
+        const t = pick(await getJSON(url));
+        if (t) return t;
+        why.push('Google：沒有結果');
+        break;
+      } catch (err) {
+        why.push('Google：' + reason(err));
+        if (i === 0) await sleep(700);
+      }
+    }
+    try { return await myMemory(q, pair); } catch (err) { why.push('備用：' + reason(err)); }
+    throw new Error(why.join('；'));
   }
 
   function gtxUrl(q, dts) {
@@ -40,16 +74,7 @@
 
   // 翻譯一段或多段文字（多段用換行分隔，一次送出）
   async function translate(text) {
-    try {
-      const data = await getJSON(gtxUrl(text, ['t']));
-      return (data[0] || []).map((seg) => seg[0] || '').join('').trim();
-    } catch (err) {
-      const url = 'https://api.mymemory.translated.net/get?' + new URLSearchParams({ q: text, langpair: 'en|zh-TW' });
-      const data = await getJSON(url);
-      const t = data && data.responseData && data.responseData.translatedText;
-      if (!t) throw err;
-      return t;
-    }
+    return viaGoogle(gtxUrl(text, ['t']), 'en|zh-TW', text, (data) => (data[0] || []).map((seg) => seg[0] || '').join('').trim());
   }
 
   async function translateMany(lines) {
@@ -131,10 +156,12 @@
     try {
       g = await getJSON(url);
     } catch (err) {
-      const data = await getJSON('https://api.mymemory.translated.net/get?' + new URLSearchParams({ q, langpair: 'zh-TW|en' }));
-      const t = data && data.responseData && data.responseData.translatedText;
-      if (!t) throw err;
-      return { en: t, groups: [] };
+      await sleep(700);
+      try { g = await getJSON(url); } catch (err2) {
+        const why = ['Google：' + reason(err2)];
+        try { return { en: await myMemory(q, 'zh-TW|en'), groups: [] }; } catch (err3) { why.push('備用：' + reason(err3)); }
+        throw new Error(why.join('；'));
+      }
     }
     const en = (g[0] || []).map((seg) => seg[0] || '').join('').trim();
     const groups = (g[1] || []).map((row) => ({

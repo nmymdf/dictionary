@@ -1200,3 +1200,9 @@ html:not(.wide) .topbar .brand-meta { flex-direction: column; gap: 0; align-item
 /* v1.9.9：卡片上標示新字／第幾次複習 */
 .rep-tag { font-size: .72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; color: var(--muted); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
 .rep-tag.new { color: var(--gold); background: var(--gold-soft); box-shadow: none; }
+
+/* v1.15 答完直接顯示：字、音標、發音、中文意思 */
+.ans-box { margin: 10px 0; padding: 12px 14px; border-radius: 14px; background: var(--surface); box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 6px; }
+.ans-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ans-word { font-size: 1.3rem; }
+.ans-ex { display: flex; align-items: center; gap: 8px; }

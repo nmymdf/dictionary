@@ -138,5 +138,5 @@
     return parse(r.text, q.trim());
   }
 
-  window.Yahoo = { canFetch, lookup, parse, SEARCH };
+  window.Yahoo = { canFetch, lookup, parse, SEARCH, fetchText: nativeFetch };
 })();
