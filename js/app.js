@@ -5,7 +5,7 @@
 
   /* ---------- 狀態 ---------- */
   const DAYMS = 86400000;
-  const APP_VERSION = '1.13.0';
+  const APP_VERSION = '1.14.0';
   const APP_DATE = '2026/10/01';
   const IS_DESKTOP = !!window.DesktopApp;
   const DEFAULT_SETTINGS = {
@@ -1980,6 +1980,34 @@
   let installEvt = null;
   window.addEventListener('beforeinstallprompt', (ev) => { ev.preventDefault(); installEvt = ev; });
 
+  // 日常句子：列出「新查的」字有沒有日常句子；造句請 Claude 做（App 裡不接 AI）
+  const newWordsLife = () => {
+    const list = S.entries.filter((e) => e.src === 'new' && e.type === 'word' && !e.temp);
+    return { without: list.filter((e) => !(e.life && e.life.length)), withLife: list.filter((e) => e.life && e.life.length) };
+  };
+  function viewLife() {
+    const { without, withLife } = newWordsLife();
+    const total = without.length + withLife.length;
+    return {
+      title: '日常句子', tab: 'life', back: '#/more',
+      html: `
+      <section class="block">
+        <p class="muted small">「新查的」字，每個字有兩句日常句子，複習卡片會顯示。句子由 Claude 幫你造：造好後按同步，手機和電腦都會收到。</p>
+        <div class="stats three">
+          <div><span class="stat-n tnum">${total}</span><span class="stat-l">新查的字</span></div>
+          <div><span class="stat-n tnum">${withLife.length}</span><span class="stat-l">已有句子</span></div>
+          <div><span class="stat-n tnum">${without.length}</span><span class="stat-l">還沒有句子</span></div>
+        </div>
+      </section>
+      ${without.length ? `<section class="block">
+        <h3>還沒有句子的字</h3>
+        <ul class="list">${without.map((e) => entryRow(e, { noTag: true })).join('')}</ul>
+        <button class="btn primary wide" data-act="life-copy">${ic('pen')} 複製「補句子」的說明</button>
+        <p class="muted small">按了之後，貼給 Claude（或直接跟 Claude 說「補生活例句」），它就會幫上面這些字造句。造好後回來按「同步」。</p>
+      </section>` : `<section class="block"><p class="note">新查的字都已經有日常句子了。</p></section>`}
+      ${withLife.length ? `<section class="block"><h3>已經有句子的字</h3><ul class="list">${withLife.map((e) => entryRow(e, { noTag: true })).join('')}</ul></section>` : ''}`,
+    };
+  }
   function viewMore() {
     const item = (href, icon, title, sub) => `<li><a class="menu-item" href="${href}">${ic(icon)}<span class="menu-text"><span>${title}</span><span class="muted small">${sub}</span></span>${ic('chev', 'chev')}</a></li>`;
     const words = S.entries.filter((e) => e.type === 'word' && !e.temp).length;
@@ -1991,6 +2019,7 @@
       <ul class="menu">
         ${item('#/backup', 'swap', '匯出 / 匯入 JSON', '手機與 Windows 互轉，用 Quick Share 傳')}
         ${item('#/import', 'file', '匯入 Word 單字簿', '新的 .docx 檔，拆成單字卡')}
+        ${item('#/life', 'pen', '日常句子', '新查的字有沒有日常句子、請 Claude 補')}
         ${item('#/settings', 'gear', '設定', '發音、複習、外觀、資料')}
         ${item('#/help', 'book', '使用說明', '安裝、分享、複習方式')}
       </ul>
@@ -2257,6 +2286,7 @@
     [/^review\/quiz$/, viewQuiz],
     [/^review\/result$/, viewReviewResult],
     ...Object.keys(KIND).map((k) => [new RegExp(`^review\\/${k}$`), viewStartMode(k)]),
+    [/^life$/, viewLife],
     [/^more$/, viewMore],
     [/^help$/, viewHelp],
     [/^import$/, viewImport],
@@ -2533,6 +2563,14 @@
     'del-new': (d) => { const e = byId(d.id); if (e) removeFromReview(e); },
     'w-retry': (d) => fetchWord(d.q),
     's-retry': (d) => fetchSentence(d.q),
+    'life-copy': () => {
+      const words = newWordsLife().without.map((e) => e.text);
+      if (!words.length) return;
+      const text = `請幫這些新查的字補日常句子（補生活例句）：${words.join('、')}`;
+      const done = () => toast('已複製，貼給 Claude 就可以了');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => toast(text));
+      else toast(text);
+    },
     'clear-recent': () => {
       const old = S.recent;
       S.recent = []; saveRecent(); render();
